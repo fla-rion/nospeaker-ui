@@ -163,6 +163,8 @@ final class SpeakerController: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var controller = SpeakerController()
+    @StateObject private var updateChecker = UpdateChecker()
+    @State private var showingUpdateAlert = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -240,5 +242,15 @@ struct ContentView: View {
             .frame(minHeight: 170)
         }
         .padding(24)
+        .onAppear {
+            Task {
+                await updateChecker.checkForUpdates()
+                showingUpdateAlert = updateChecker.availableVersion != nil
+            }
+        }
+        .alert("Update available: v\(updateChecker.availableVersion ?? "")", isPresented: $showingUpdateAlert) {
+            Button("Open Releases") { updateChecker.openReleasesPage() }
+            Button("Later", role: .cancel) {}
+        }
     }
 }
