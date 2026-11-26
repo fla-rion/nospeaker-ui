@@ -1549,6 +1549,7 @@ if flag("--help") || flag("-h") {
       nospeaker                         the show (space skips a part, q goes to the end)
       nospeaker "any words"             just say something
       nospeaker --sweep                 a rising tone, 100 Hz to 4 kHz
+      nospeaker --tone 440              hold one frequency until stopped
       --voice Daniel                    any voice from `say -v '?'`
       --dark                            white on black instead of black on white
       --plain                           no visuals
@@ -1567,8 +1568,18 @@ if let v = voiceName, !voiceExists(v) {
 applyTheme(light: !flag("--dark"))
 let plain = flag("--plain")
 let wantsSweep = flag("--sweep")
+let toneValue = option("--tone", example: "440")
 preferExternal = flag("--external")
 if let unknown = args.first(where: { $0.hasPrefix("-") }) { usageError("\"\(unknown)\" isn't an option.") }
+
+var toneFrequency: Double?
+if let toneValue {
+    guard let frequency = Double(toneValue), frequency.isFinite, (100...4000).contains(frequency) else {
+        usageError("--tone needs a frequency from 100 to 4000 Hz.")
+    }
+    toneFrequency = frequency
+    guard args.isEmpty, !wantsSweep else { usageError("--tone can't be combined with text or --sweep.") }
+}
 
 signal(SIGINT) { _ in requestEnd() }
 signal(SIGTERM) { _ in stopRequested = true }
@@ -1577,7 +1588,16 @@ atexit { restoreTerminal() }
 motor = openMotor()
 motorPointer = Unmanaged.passUnretained(motor! as AnyObject).toOpaque()
 
-if wantsSweep || !args.isEmpty {
+if let frequency = toneFrequency {
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0)
+    print("playing \(frequency) Hz; stop with Ctrl-C")
+    while !interrupted() {
+        let seconds = max(1, (0.02 * frequency).rounded()) / frequency
+        let start = mach_absolute_time()
+        play([(frequency, 1)], ms: seconds * 1000, level: 1)
+        waitUntil(start + UInt64(seconds * ticksPerSecond))
+    }
+} else if wantsSweep || !args.isEmpty {
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0)
     if wantsSweep { print("sweeping 100 Hz → 4 kHz…"); sweep(seconds: 5) }
     if !args.isEmpty {

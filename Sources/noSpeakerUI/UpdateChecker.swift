@@ -6,7 +6,7 @@ import Foundation
 final class UpdateChecker: ObservableObject {
     @Published private(set) var availableVersion: String?
 
-    private let currentVersion = "1.0.0"
+    private let currentVersion = "1.1.0"
     private let latestReleaseURL = URL(string: "https://api.github.com/repos/fla-rion/nospeaker-ui/releases/latest")!
     let releasesPageURL = URL(string: "https://github.com/fla-rion/nospeaker-ui/releases/latest")!
 
