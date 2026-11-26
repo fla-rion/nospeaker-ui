@@ -70,6 +70,19 @@ cd nospeaker
 --external                           play through an external Magic Trackpad
 ```
 
+## noSpeakerUI
+
+This repository also includes a SwiftUI macOS app for entering text, choosing an installed system voice,
+running the sweep or built-in demo, and viewing process output. Build a universal `.app` bundle with:
+
+```sh
+./build-app.sh
+open build/noSpeakerUI.app
+```
+
+The app needs macOS 12 or later and a Force Touch trackpad, just like the command-line tool. It bundles the
+universal `nospeaker` binary in its app resources.
+
 ## 04 / needs
 
 A Force Touch trackpad (built into MacBooks from 2015 on, or a Magic Trackpad 2 or newer), and macOS 12 or

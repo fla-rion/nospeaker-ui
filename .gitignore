@@ -1,4 +1,5 @@
 build/
+.build/
 nospeaker
 .DS_Store
 dist/
