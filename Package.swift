@@ -6,6 +6,6 @@ let package = Package(
     platforms: [.macOS(.v12)],
     products: [.executable(name: "noSpeakerUI", targets: ["noSpeakerUI"])],
     targets: [
-        .executableTarget(name: "noSpeakerUI", path: "Sources/noSpeakerUI")
+        .executableTarget(name: "noSpeakerUI", path: "Sources/noSpeakerUI", resources: [.copy("Resources/midi")])
     ]
 )

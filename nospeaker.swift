@@ -1569,10 +1569,18 @@ applyTheme(light: !flag("--dark"))
 let plain = flag("--plain")
 let wantsSweep = flag("--sweep")
 let toneValue = option("--tone", example: "440")
+let toneStrengthValue = option("--strength", example: "0.8")
 preferExternal = flag("--external")
 if let unknown = args.first(where: { $0.hasPrefix("-") }) { usageError("\"\(unknown)\" isn't an option.") }
 
 var toneFrequency: Double?
+var toneStrength: Float = 1
+if let toneStrengthValue {
+    guard let strength = Double(toneStrengthValue), strength.isFinite, (0...1).contains(strength) else {
+        usageError("--strength needs a value from 0 to 1.")
+    }
+    toneStrength = Float(strength)
+}
 if let toneValue {
     guard let frequency = Double(toneValue), frequency.isFinite, (100...4000).contains(frequency) else {
         usageError("--tone needs a frequency from 100 to 4000 Hz.")
@@ -1594,7 +1602,7 @@ if let frequency = toneFrequency {
     while !interrupted() {
         let seconds = max(1, (0.02 * frequency).rounded()) / frequency
         let start = mach_absolute_time()
-        play([(frequency, 1)], ms: seconds * 1000, level: 1)
+        play([(frequency, 1)], ms: seconds * 1000, level: toneStrength)
         waitUntil(start + UInt64(seconds * ticksPerSecond))
     }
 } else if wantsSweep || !args.isEmpty {

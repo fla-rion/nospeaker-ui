@@ -183,6 +183,7 @@ private struct PianoKey: Identifiable {
 struct ContentView: View {
     @StateObject private var controller = SpeakerController()
     @StateObject private var updateChecker = UpdateChecker()
+    @StateObject private var midiPlayer = MIDIPlayer()
     @State private var showingUpdateAlert = false
     @State private var selectedTab = 0
     @State private var heldKeys = Set<Int>()
@@ -213,6 +214,7 @@ struct ContentView: View {
                 controls.tabItem { Label("Speak", systemImage: "waveform") }.tag(0)
                 keyboard.tabItem { Label("Keyboard", systemImage: "pianokeys") }.tag(1)
                 instrument.tabItem { Label("Theremin & MIDI", systemImage: "slider.horizontal.3") }.tag(2)
+                midi.tabItem { Label("MIDI Player", systemImage: "music.note.list") }.tag(3)
             }
 
             HStack {
@@ -323,6 +325,32 @@ struct ContentView: View {
             if controller.midiEnabled && controller.midiSources.isEmpty { Text("No MIDI input sources found.").foregroundColor(.secondary) }
             Spacer()
         }.padding(.top, 12)
+    }
+
+    private var midi: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Built-in Pieces").font(.headline)
+            List(BuiltInPiece.all) { piece in
+                HStack {
+                    VStack(alignment: .leading) { Text(piece.name); Text("\(piece.composer) · \(piece.difficulty)").font(.caption).foregroundColor(.secondary) }
+                    Spacer()
+                    if midiPlayer.currentTrackName == piece.name { Image(systemName: "checkmark.circle.fill").foregroundColor(.accentColor) }
+                }.contentShape(Rectangle()).onTapGesture { midiPlayer.choose(piece) }
+            }.frame(minHeight: 170)
+            HStack { Text("Open Your Own MIDI").font(.headline); Spacer(); Button("Open File…", action: midiPlayer.openFile) }
+            Divider()
+            HStack { Text(midiPlayer.currentTrackName.isEmpty ? "No track selected" : midiPlayer.currentTrackName).lineLimit(1); Spacer(); Text("\(Int(midiPlayer.progress * 100))%") }
+            ProgressView(value: midiPlayer.progress)
+            HStack {
+                Button { midiPlayer.isPlaying ? midiPlayer.pause() : midiPlayer.play() } label: { Label(midiPlayer.isPlaying ? "Pause" : "Play", systemImage: midiPlayer.isPlaying ? "pause.fill" : "play.fill") }
+                    .disabled(midiPlayer.selectedURL == nil)
+                Button(action: midiPlayer.stop) { Label("Stop", systemImage: "stop.fill") }
+                Spacer()
+                Picker("Instrument", selection: $midiPlayer.currentInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 170)
+            }
+            HStack { Text("Tempo"); Slider(value: $midiPlayer.tempo, in: 0.5...2); Text("\(Int(midiPlayer.tempo * 100))%") }
+            HStack { Text("Strength"); Slider(value: $midiPlayer.volume, in: 0...1); Text("\(Int(midiPlayer.volume * 100))%") }
+        }.padding(.top, 10)
     }
 
     private func installKeyboardMonitor() {
