@@ -3,6 +3,13 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.7.0] - 2026-11-27
+### Added
+- 📖 Bookworm tab: load .txt, .rtf, or .pdf files and read them aloud via the trackpad haptic motor
+- Sentence-by-sentence playback with current sentence display
+- Voice selection and reading speed control
+- Easter egg: plays a jingle when the word "nospeaker" is detected in the loaded text
+
 ## [1.5.1] - 2026-11-27
 ### Fixed
 - Keyboard notes sustain until their key is released, including legato transitions

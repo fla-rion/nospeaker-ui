@@ -225,6 +225,8 @@ struct ContentView: View {
                 keyboard.tabItem { Label("Keyboard", systemImage: "pianokeys") }.tag(1)
                 instrument.tabItem { Label("Theremin & MIDI", systemImage: "slider.horizontal.3") }.tag(2)
                 midi.tabItem { Label("MIDI Player", systemImage: "music.note.list") }.tag(3)
+                BookwormView(voices: controller.voices, selectedVoice: controller.selectedVoice, onVoiceChange: { controller.selectedVoice = $0 }, onLog: { controller.logMIDI($0) })
+                    .tabItem { Label("📖 Bookworm", systemImage: "book") }.tag(4)
             }
 
             HStack {
