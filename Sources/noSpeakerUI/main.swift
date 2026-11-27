@@ -188,7 +188,7 @@ private struct PianoKey: Identifiable {
 struct ContentView: View {
     enum ActiveSheet: Identifiable {
         case update, settings
-        var id: Int { hashValue }
+        var id: String { switch self { case .update: return "update"; case .settings: return "settings" } }
     }
 
     @StateObject private var controller = SpeakerController()
@@ -275,7 +275,7 @@ struct ContentView: View {
             }.frame(minHeight: 125)
         }
         .padding(20)
-        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { activeSheet = .settings }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); if updateManager.latestRelease?.isNewer == true { activeSheet = .update } } } } }
+        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { activeSheet = .settings }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); if updateManager.latestRelease?.isNewer == true { activeSheet = .update } } }.disabled(updateManager.isChecking) } }
         .onAppear {
             midiPlayer.onLog = { message in controller.logMIDI(message) }
             installKeyboardMonitor()
@@ -288,6 +288,15 @@ struct ContentView: View {
             }
         }
         .onDisappear { removeKeyboardMonitor(); if controller.midiEnabled { controller.midiEnabled = false }; controller.stop() }
+        .alert("noSpeakerUI is up to date", isPresented: $updateManager.showUpToDateAlert) {
+            Button("OK") { updateManager.showUpToDateAlert = false }
+        } message: {
+            if let err = updateManager.errorMessage {
+                Text(err)
+            } else {
+                Text("Version \(UpdateManager.currentVersion) is the latest release.")
+            }
+        }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .update: UpdateSheet(manager: updateManager)

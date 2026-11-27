@@ -13,6 +13,8 @@ final class UpdateManager: ObservableObject {
     @Published var isDownloading = false
     @Published var downloadedDMGPath: String? = nil
     @Published var errorMessage: String? = nil
+    @Published var upToDate: Bool = false
+    @Published var showUpToDateAlert: Bool = false
 
     struct ReleaseInfo {
         let tag: String
@@ -43,8 +45,18 @@ final class UpdateManager: ObservableObject {
             let formatter = ISO8601DateFormatter()
             let date = release.publishedAt.flatMap { formatter.date(from: $0) }.map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none) } ?? ""
             let info = ReleaseInfo(tag: release.tagName, name: release.name.isEmpty ? "noSpeakerUI \(release.tagName)" : release.name, body: release.body, dmgURL: url, dmgSize: asset.size, date: date, isNewer: newer)
-            latestRelease = newer ? info : nil
-        } catch { errorMessage = "Could not check for updates: \(error.localizedDescription)" }
+            if newer {
+                latestRelease = info
+                upToDate = false
+            } else {
+                latestRelease = nil
+                upToDate = true
+                showUpToDateAlert = true
+            }
+        } catch {
+            errorMessage = "Update check failed: \(error.localizedDescription)"
+            showUpToDateAlert = true
+        }
     }
 
     func downloadUpdate() async {
