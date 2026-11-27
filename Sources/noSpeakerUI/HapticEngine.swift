@@ -115,6 +115,28 @@ final class HapticEngine {
         }
     }
 
+    // Synchronous device open — called from renderFrame on queue when discoverDevices() hasn't finished
+    private func openDevicesSynchronously() {
+        guard let listFn = getSymbol("MTDeviceCreateList", as: DeviceList.self),
+              let idFn = getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
+              let builtInFn = getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self),
+              let startFn = getSymbol("MTDeviceStart", as: DeviceStart.self),
+              let createFn = getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
+              let openFn = getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
+              let list = listFn()?.takeRetainedValue() else { return }
+        cachedDeviceList = list
+        for index in 0..<CFArrayGetCount(list) {
+            guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
+            let ptr = UnsafeMutableRawPointer(mutating: raw)
+            _ = startFn(ptr, 0)
+            var id: UInt64 = 0
+            guard idFn(ptr, &id) == 0,
+                  let actuator = createFn(id)?.takeRetainedValue(),
+                  openFn(actuator) == 0 else { continue }
+            devices.append(TrackpadDevice(id: id, isBuiltIn: builtInFn(ptr), actuator: actuator, devicePtr: ptr))
+        }
+    }
+
     private func midiNoteToHz(_ note: Int) -> Double { 440 * pow(2, Double(note - 69) / 12) }
     private func clampHz(_ hz: Double) -> Double { min(currentFrequencyMode == .standard ? 3951 : 8000, max(98, hz)) }
 
@@ -153,7 +175,7 @@ final class HapticEngine {
     func playWelcomeMelody() {
         let notes = [60, 64, 67, 72, 71, 67, 64, 60]
         for (index, note) in notes.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 + Double(index) * 0.14) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(index) * 0.14) { [weak self] in
                 self?.startNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.9)
             }
         }
@@ -180,6 +202,8 @@ final class HapticEngine {
             voices.removeValue(forKey: note)
         }
         guard !voices.isEmpty else { DispatchQueue.main.async { [weak self] in self?.onVoicesChanged([]) }; stopRenderer(); return }
+        // Lazy device open: if discoverDevices() hasn't finished yet, open synchronously now
+        if devices.isEmpty { openDevicesSynchronously() }
         guard !devices.isEmpty,
               let createFn = getSymbol("MTActuationCreateFromDictionary", as: ActuationCreate.self),
               let playFn = getSymbol("MTActuationActuate", as: ActuationPlay.self) else { return }
