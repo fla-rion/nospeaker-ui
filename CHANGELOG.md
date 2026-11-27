@@ -3,6 +3,22 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.9.0] - 2026-11-27
+### Added
+- DAW Integration: virtual Core MIDI destination "noSpeakerUI Haptic Synth" — route notes directly from Logic Pro, Ableton Live, GarageBand, or any Core MIDI application
+- DAW tab: status indicator, setup instructions for Logic/Ableton, MIDI channel → instrument mapping, clock indicator
+- MIDI channel mapping: Ch 1-10 select instrument presets; velocity controls haptic strength
+- Supported MIDI CCs: #7 Volume, #11 Expression, #123 All Notes Off
+- MIDI Clock display (sync from DAW shown in DAW tab)
+### Updated
+- README.md: complete rewrite with DAW integration guide, MIDI channel table, Ableton/Logic setup steps
+
+## [1.8.1] - 2026-11-27
+### Fixed
+- Shared single HapticEngine between SpeakerController and MIDIPlayer (was two separate instances causing hardware race condition)
+- Visualizer throttled to 30 Hz (was 100 Hz, causing excessive MainActor load)
+- Fixed retain cycle (missing weak self) in HapticEngine render loop closure
+
 ## [1.8.0] - 2026-11-27
 ### Added
 - Presets: save/load instrument+tempo+volume+octave+legato settings as named JSON presets

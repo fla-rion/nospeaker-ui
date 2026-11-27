@@ -31,6 +31,8 @@ final class SpeakerController: ObservableObject {
     @Published var availableTrackpads: [(id: UInt64, name: String, isBuiltIn: Bool)] = []
     @Published var keyboardTempo = 1.0
     @Published var keyboardVolume = 0.8
+    @Published var midiClockRunning = false
+    @Published var virtualMIDIEnabled = true { didSet { virtualMIDIEnabled ? virtualMIDI.start() : virtualMIDI.stop() } }
     @Published var legato = false
     @Published var portamentoMilliseconds = 40.0
     @Published var frequencyMode: HapticEngine.FrequencyMode = .standard { didSet { haptics.frequencyMode = frequencyMode } }
@@ -38,6 +40,7 @@ final class SpeakerController: ObservableObject {
     @Published private(set) var flashingNotes = Set<Int>()
 
     private let haptics = HapticEngine()
+    let virtualMIDI = VirtualMIDIPort()
     private var process: Process?
     private var outputPipes: [Pipe] = []
     private var midiClient = MIDIClientRef()
@@ -46,7 +49,35 @@ final class SpeakerController: ObservableObject {
     private var sustainedKeys = Set<Int>()
     private var lastThereminFrequency: Double?
 
-    init() { haptics.onVoicesChanged = { [weak self] in self?.visualVoices = $0 }; haptics.onTrackpadsChanged = { [weak self] in self?.availableTrackpads = $0 }; loadVoices(); refreshMIDISources(); haptics.discoverDevices() }
+    init() {
+        haptics.onVoicesChanged = { [weak self] in self?.visualVoices = $0 }
+        haptics.onTrackpadsChanged = { [weak self] in self?.availableTrackpads = $0 }
+        loadVoices(); refreshMIDISources(); haptics.discoverDevices()
+        virtualMIDI.onNoteOn = { [weak self] note, velocity, channel in
+            guard let self else { return }
+            let presets = InstrumentPreset.allCases
+            let preset = presets[max(0, min(presets.count - 1, channel))]
+            let strength = Double(velocity) / 127.0 * self.keyboardVolume
+            if channel == 9 { self.haptics.startNote(midiNote: note, preset: .xylophone, durationSeconds: 0.16, strength: strength) }
+            else { self.haptics.startNoteSustained(midiNote: note, preset: preset, strength: strength) }
+            self.flashingNotes.insert(note)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { self.flashingNotes.remove(note) }
+        }
+        virtualMIDI.onNoteOff = { [weak self] note, _ in self?.haptics.stopNote(midiNote: note) }
+        virtualMIDI.onProgramChange = { [weak self] program, _ in
+            guard let self else { return }
+            let presets = InstrumentPreset.allCases
+            self.keyboardInstrument = presets[max(0, min(presets.count - 1, program))]
+        }
+        virtualMIDI.onControlChange = { [weak self] cc, value, _ in
+            guard let self else { return }
+            if cc == 7 || cc == 11 { self.keyboardVolume = Double(value) / 127.0 }
+            if cc == 123 || cc == 120 { self.haptics.stopAllNotes() }
+        }
+        virtualMIDI.onClockStart = { [weak self] in self?.midiClockRunning = true }
+        virtualMIDI.onClockStop = { [weak self] in self?.midiClockRunning = false }
+        virtualMIDI.start()
+    }
 
     func speak() {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,6 +334,8 @@ struct ContentView: View {
                 midi.tabItem { Label("MIDI Player", systemImage: "music.note.list") }.tag(3)
                 BookwormView(voices: controller.voices, selectedVoice: controller.selectedVoice, onVoiceChange: { controller.selectedVoice = $0 }, onLog: { controller.logMIDI($0) })
                     .tabItem { Label("📖 Bookworm", systemImage: "book") }.tag(4)
+                DAWView(controller: controller, port: controller.virtualMIDI)
+                    .tabItem { Label("🎛️ DAW", systemImage: "pianokeys") }.tag(5)
             }
             .onChange(of: selectedTab) { tab in
                 if tab != 1 { heldKeys.forEach { controller.releaseNote($0) }; heldKeys.removeAll(); mouseHeldKeys.forEach { controller.releaseNote($0) }; mouseHeldKeys.removeAll() }
@@ -504,6 +537,44 @@ struct ContentView: View {
             HStack { Text("Strength"); Slider(value: $midiPlayer.volume, in: 0...1); Text("\(Int(midiPlayer.volume * 100))%") }
             Text("Tip: Convert sheet music to MIDI at musescore.com").font(.caption).foregroundColor(.secondary)
         }.padding(.top, 10)
+    }
+
+    private struct DAWView: View {
+        @ObservedObject var controller: SpeakerController
+        @ObservedObject var port: VirtualMIDIPort
+        private let mappings = Array(zip(1...10, ["Piano", "Organ", "Guitar", "Violin", "Flute", "Trumpet", "Bass", "Xylophone", "Harpsichord", "Percussion (short notes)"]))
+
+        var body: some View {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        Text(port.isActive ? "● Connected" : "● Disconnected")
+                            .font(.title2.weight(.bold)).foregroundColor(port.isActive ? .green : .red)
+                        Spacer()
+                    }
+                    Text("Virtual MIDI port 'noSpeakerUI Haptic Synth' is \(port.isActive ? "active" : "inactive")")
+                    Text("Last MIDI message: \(port.lastMessage.isEmpty ? "None received" : port.lastMessage)").foregroundColor(.secondary)
+                    Text(controller.midiClockRunning ? "🎵 Clock: Running" : "⏸ Clock: Stopped")
+                    Toggle("Enable Virtual MIDI Port", isOn: $controller.virtualMIDIEnabled)
+                    GroupBox("Setup Instructions") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Logic Pro: Track header → Software Instrument → MIDI In → noSpeakerUI Haptic Synth")
+                            Text("Ableton: Preferences → Link/Tempo/MIDI → MIDI Ports → noSpeakerUI Haptic Synth → Track: On")
+                            Text("GarageBand: Track → Software Instrument → MIDI input: noSpeakerUI Haptic Synth")
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    GroupBox("MIDI Channel → Instrument Mapping") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(1...10, id: \.self) { channel in Text("Ch \(channel) = \(mappings[channel - 1].1)") }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    GroupBox("Supported MIDI Messages") {
+                        Text("Note On/Off · Program Change (selects instrument) · CC #7 Volume · CC #11 Expression · CC #123 All Notes Off · MIDI Clock")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }.padding(.top, 12)
+            }.padding(.horizontal)
+        }
     }
 
     private func installKeyboardMonitor() {
