@@ -81,12 +81,109 @@ final class UpdateManager: ObservableObject {
         } catch { errorMessage = "Download failed: \(error.localizedDescription)" }
     }
 
-    @Published var showInstallInstructions = false
+    @Published var isInstalling = false
+    @Published var installResult: String? = nil  // nil = no result yet, "" = success, "error msg" = failure
 
+    func installUpdate() async {
+        guard let dmgPath = downloadedDMGPath else { return }
+        isInstalling = true; installResult = nil
+        defer { isInstalling = false }
+
+        do {
+            // 1. Mount DMG
+            let mountOutput = try await runCommand("/usr/bin/hdiutil",
+                args: ["attach", "-nobrowse", "-quiet", dmgPath])
+
+            // Find mount point (last /Volumes/... line from hdiutil)
+            let mountPoint = mountOutput.split(separator: "\n")
+                .compactMap { line -> String? in
+                    let parts = line.split(separator: "\t")
+                    guard parts.count >= 3 else { return nil }
+                    let mp = parts.last.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+                    return mp.hasPrefix("/Volumes/") ? mp : nil
+                }.last
+
+            guard let mountPoint else { throw UpdateError.mountFailed }
+
+            // 2. Find .app in mounted volume
+            let fm = FileManager.default
+            let appFiles = try fm.contentsOfDirectory(atPath: mountPoint)
+                .filter { $0.hasSuffix(".app") }
+            guard let appName = appFiles.first else { throw UpdateError.noAppFound }
+
+            let sourceApp = "\(mountPoint)/\(appName)"
+            let destApp = "/Applications/\(appName)"
+            let destAppUser = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Applications/\(appName)").path
+
+            // 3. Copy app — try /Applications first, fall back to ~/Applications
+            let destination: String
+            if fm.fileExists(atPath: destApp) || fm.isWritableFile(atPath: "/Applications/") {
+                if fm.fileExists(atPath: destApp) {
+                    try fm.removeItem(atPath: destApp)
+                }
+                try fm.copyItem(atPath: sourceApp, toPath: destApp)
+                destination = destApp
+            } else {
+                try fm.createDirectory(atPath: FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent("Applications").path,
+                    withIntermediateDirectories: true)
+                if fm.fileExists(atPath: destAppUser) {
+                    try fm.removeItem(atPath: destAppUser)
+                }
+                try fm.copyItem(atPath: sourceApp, toPath: destAppUser)
+                destination = destAppUser
+            }
+
+            // 4. Unmount DMG
+            _ = try? await runCommand("/usr/bin/hdiutil", args: ["detach", mountPoint, "-quiet"])
+
+            // 5. Launch new version and quit current
+            installResult = ""
+            try? fm.removeItem(atPath: dmgPath)  // cleanup
+            NSWorkspace.shared.open(URL(fileURLWithPath: destination))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                NSApplication.shared.terminate(nil)
+            }
+        } catch {
+            installResult = error.localizedDescription
+        }
+    }
+
+    // Legacy: just open the DMG if auto-install fails
     func openDMG() {
         guard let downloadedDMGPath else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: downloadedDMGPath))
-        showInstallInstructions = true
+    }
+
+    private enum UpdateError: LocalizedError {
+        case mountFailed, noAppFound
+        var errorDescription: String? {
+            switch self {
+            case .mountFailed: return "Could not mount the downloaded DMG."
+            case .noAppFound: return "No .app found in the downloaded DMG."
+            }
+        }
+    }
+
+    private func runCommand(_ path: String, args: [String]) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: path)
+            proc.arguments = args
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.terminationHandler = { p in
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                if p.terminationStatus == 0 {
+                    continuation.resume(returning: output)
+                } else {
+                    continuation.resume(throwing: NSError(domain: "UpdateError", code: Int(p.terminationStatus),
+                        userInfo: [NSLocalizedDescriptionKey: "Command failed: \(path) \(args.joined(separator: " "))\n\(output)"]))
+                }
+            }
+            do { try proc.run() } catch { continuation.resume(throwing: error) }
+        }
     }
 
     func openReleasesPage() { NSWorkspace.shared.open(releasesPageURL) }

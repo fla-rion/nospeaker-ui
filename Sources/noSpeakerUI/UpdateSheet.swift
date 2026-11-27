@@ -16,7 +16,21 @@ struct UpdateSheet: View {
                 if let error = manager.errorMessage { Text(error).foregroundStyle(.red).font(.callout) }
                 HStack {
                     if manager.downloadedDMGPath != nil {
-                        Button("Open DMG") { manager.openDMG(); dismiss() }
+                        if manager.isInstalling {
+                            ProgressView("Installing…").frame(width: 160)
+                        } else if let result = manager.installResult {
+                            if result.isEmpty {
+                                Label("Installed — restarting…", systemImage: "checkmark.circle.fill").foregroundColor(.green)
+                            } else {
+                                VStack(alignment: .leading) {
+                                    Text("Install failed: \(result)").foregroundColor(.red).font(.caption)
+                                    Button("Open DMG manually") { manager.openDMG() }
+                                }
+                            }
+                        } else {
+                            Button("Install Update") { Task { await manager.installUpdate() } }.buttonStyle(.borderedProminent)
+                            Button("Open DMG") { manager.openDMG() }.foregroundColor(.secondary)
+                        }
                     } else if manager.isDownloading {
                         ProgressView(value: manager.downloadProgress) { Text("Downloading…") } currentValueLabel: { Text("\(Int(manager.downloadProgress * 100))%") }.frame(width: 220)
                     } else {
@@ -32,10 +46,6 @@ struct UpdateSheet: View {
             }
         }
         .padding(22).frame(width: 520, height: 430)
-        .alert("DMG geöffnet — Installation", isPresented: $manager.showInstallInstructions) {
-            Button("OK") { manager.showInstallInstructions = false }
-        } message: {
-            Text("1. Im geöffneten Fenster: noSpeakerUI auf Applications ziehen\n2. Falls macOS warnt: Systemeinstellungen → Datenschutz & Sicherheit → 'Trotzdem öffnen'\n3. Die neue Version starten und die alte beenden")
-        }
+
     }
 }

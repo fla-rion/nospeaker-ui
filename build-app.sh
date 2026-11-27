@@ -32,8 +32,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key><string>com.a90.nospeakerui</string>
     <key>CFBundleName</key><string>noSpeakerUI</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.9.5</string>
-    <key>CFBundleVersion</key><string>195</string>
+    <key>CFBundleShortVersionString</key><string>1.9.6</string>
+    <key>CFBundleVersion</key><string>196</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
