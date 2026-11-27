@@ -361,6 +361,12 @@ struct ContentView: View {
         .preferredColorScheme(preferredAppearance)
         .toolbar { ToolbarItemGroup(placement: .primaryAction) { Menu("Appearance") { Button("☀️ Light") { preferredAppearance = .light }; Button("🌙 Dark") { preferredAppearance = .dark }; Button("Auto") { preferredAppearance = nil } }; Button("Help") { activeSheet = .settings }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); if updateManager.latestRelease?.isNewer == true { activeSheet = .update } } }.disabled(updateManager.isChecking) } }
         .onAppear {
+            // Share single HapticEngine — prevents two engines fighting over same hardware
+            midiPlayer.haptics = controller.haptics
+            controller.haptics.onVoicesChanged = { [weak controller, weak midiPlayer] voices in
+                controller?.visualVoices = voices
+                midiPlayer?.visualVoices = voices
+            }
             midiPlayer.onLog = { message in controller.logMIDI(message) }
             midiPlayer.trackpadAssignment = controller.trackpadAssignment
             installKeyboardMonitor()
