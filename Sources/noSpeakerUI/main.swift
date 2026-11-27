@@ -27,6 +27,9 @@ final class SpeakerController: ObservableObject {
     @Published var octave = 4
     @Published var legato = false
     @Published var portamentoMilliseconds = 40.0
+    @Published var frequencyMode: HapticEngine.FrequencyMode = .standard { didSet { haptics.frequencyMode = frequencyMode } }
+    @Published var debugRender = false { didSet { haptics.debugEnabled = debugRender } }
+    @Published private(set) var flashingNotes = Set<Int>()
 
     private let haptics = HapticEngine()
     private var process: Process?
@@ -55,6 +58,8 @@ final class SpeakerController: ObservableObject {
     func playWelcomeMelody() async { await haptics.playWelcomeMelody() }
 
     func playNote(_ midiNote: Int) {
+        flashingNotes.insert(midiNote)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { self.flashingNotes.remove(midiNote) }
         let previous = activeKeys.first
         activeKeys.insert(midiNote)
         if legato, let previous, previous != midiNote {
@@ -253,6 +258,14 @@ struct ContentView: View {
     private var controls: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Text to speak").font(.headline)
+            GroupBox("Settings / General") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Frequency mode", selection: $controller.frequencyMode) { ForEach(HapticEngine.FrequencyMode.allCases) { Text($0.rawValue).tag($0) } }
+                    if controller.frequencyMode == .extended { Text("⚠️ Above 4 kHz: quieter and buzzier. May not work on all trackpads.").font(.caption).foregroundColor(.orange) }
+                    Text("Render Rate: 10ms / 100 Hz render loop").font(.caption)
+                    Toggle("Debug render jitter", isOn: $controller.debugRender)
+                }
+            }
             TextField("Enter text…", text: $controller.text).textFieldStyle(.roundedBorder).onSubmit(controller.speak)
             HStack {
                 Picker("Voice", selection: $controller.selectedVoice) {
@@ -285,12 +298,12 @@ struct ContentView: View {
             ZStack(alignment: .topLeading) {
                 HStack(spacing: 1) {
                     ForEach(whites) { key in
-                        pianoButton(key, color: .white, foreground: .black)
+            pianoButton(key, color: (controller.flashingNotes.contains(key.midi) || midiPlayer.flashingNotes.contains(key.midi)) ? .orange : .white, foreground: .black)
                     }
                 }
                 ForEach(keyboardNotes.filter(\.isBlack)) { key in
                     let whiteIndex = keyboardNotes.filter { !$0.isBlack && $0.midi < key.midi }.count
-                    pianoButton(key, color: .black, foreground: .white)
+                    pianoButton(key, color: (controller.flashingNotes.contains(key.midi) || midiPlayer.flashingNotes.contains(key.midi)) ? .orange : .black, foreground: .white)
                         .frame(width: whiteWidth * 0.62, height: geometry.size.height * 0.62)
                         .offset(x: CGFloat(whiteIndex) * whiteWidth - whiteWidth * 0.31)
                 }
@@ -363,6 +376,7 @@ struct ContentView: View {
             }
             HStack { Text("Tempo"); Slider(value: $midiPlayer.tempo, in: 0.5...2); Text("\(Int(midiPlayer.tempo * 100))%") }
             HStack { Text("Transpose"); Button("−") { midiPlayer.transpose = max(-12, midiPlayer.transpose - 1) }; Text("\(midiPlayer.transpose) st").frame(width: 45); Button("+") { midiPlayer.transpose = min(12, midiPlayer.transpose + 1) }; Spacer(); Toggle("Loop", isOn: $midiPlayer.loop); Toggle("Legato", isOn: $midiPlayer.legato) }
+            Picker("Polyphony Limit", selection: $midiPlayer.polyphonyLimit) { ForEach(1...4, id: \.self) { Text("\($0) voices").tag($0) } }
             HStack { Text("Portamento Time"); Slider(value: $midiPlayer.portamentoMilliseconds, in: 0...200); Text("\(Int(midiPlayer.portamentoMilliseconds)) ms") }
             HStack { Text("Strength"); Slider(value: $midiPlayer.volume, in: 0...1); Text("\(Int(midiPlayer.volume * 100))%") }
             Text("Tip: Convert sheet music to MIDI at musescore.com").font(.caption).foregroundColor(.secondary)

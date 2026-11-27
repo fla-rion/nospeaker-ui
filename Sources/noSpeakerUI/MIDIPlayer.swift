@@ -14,8 +14,11 @@ struct BuiltInPiece: Identifiable {
     @Published var currentInstrument = InstrumentPreset.piano; @Published var tempo = 1.0; @Published var volume = 0.8
     @Published var transpose = 0; @Published var loop = false; @Published var legato = false; @Published var portamentoMilliseconds = 40.0
     @Published var selectedURL: URL?; @Published var currentNoteLabel = ""
+    @Published var polyphonyLimit = 3
+    @Published private(set) var flashingNotes = Set<Int>()
     private let haptics = HapticEngine(); private var events: [Event] = []; private var index = 0; private var timer: Task<Void, Never>?; private var duration = 0.0
     private struct Event { let time: Double; let note: Int; let on: Bool; let velocity: Int }
+    private var soundingNotes = Set<Int>()
     func choose(_ piece: BuiltInPiece) { guard let url = Bundle.main.resourceURL?.appendingPathComponent("midi").appendingPathComponent(piece.filename) else { return }; selectedURL = url; currentTrackName = piece.name }
     func openFile() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.init(filenameExtension: "mid")!, .init(filenameExtension: "midi")!]; panel.allowsMultipleSelection = false
@@ -37,16 +40,24 @@ struct BuiltInPiece: Identifiable {
                 if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }; if Task.isCancelled { break }; elapsed += wait
                 let note = min(127, max(0, event.note + self.transpose))
                 if event.on {
+                    if soundingNotes.count >= polyphonyLimit, let quietestHarmony = soundingNotes.min(), quietestHarmony < note {
+                        haptics.stopNote(midiNote: quietestHarmony); soundingNotes.remove(quietestHarmony)
+                    }
+                    guard soundingNotes.count < polyphonyLimit || soundingNotes.contains(note) else { self.index += 1; continue }
+                    soundingNotes.insert(note)
+                    self.flashingNotes.insert(note)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { self.flashingNotes.remove(note) }
                     self.currentNoteLabel = "Playing: \(Self.noteName(note)) (\(self.currentInstrument.rawValue))"
                     let nextOff = self.events[(self.index + 1)...].first(where: { !$0.on && $0.note == event.note })
                     let hold = max(0.04, ((nextOff?.time ?? (event.time + 0.2)) - event.time) / self.tempo * self.currentInstrument.noteDurationMultiplier)
-                    if self.legato, let prev = self.events[..<self.index].last(where: { $0.on && $0.time < event.time }), let prevOff = self.events[self.index...].first(where: { !$0.on && $0.note == prev.note && $0.time > event.time }) {
-                        if prevOff.time > event.time { await self.haptics.glideToNote(from: prev.note + self.transpose, to: note, preset: self.currentInstrument, portamentoMilliseconds: self.portamentoMilliseconds) }
-                    } else { await self.haptics.playNote(midiNote: note, preset: self.currentInstrument, durationSeconds: hold, strength: self.volume * self.currentInstrument.strength) }
-                } else { self.haptics.stopNote(midiNote: note) }
+                    let noteLength = max(0, ((nextOff?.time ?? event.time + 0.2) - event.time) / self.tempo)
+                    if noteLength >= 0.15, self.legato, let prev = self.events[..<self.index].last(where: { $0.on && $0.time < event.time }), let prevOff = self.events[self.index...].first(where: { !$0.on && $0.note == prev.note && $0.time > event.time }) {
+                        if prevOff.time > event.time { await self.haptics.glideToNote(from: prev.note + self.transpose, to: note, preset: self.currentInstrument, portamentoMilliseconds: noteLength < 0.4 ? self.portamentoMilliseconds / 2 : self.portamentoMilliseconds) }
+                    } else { let isHarmony = soundingNotes.contains(where: { $0 > note }); await self.haptics.playNote(midiNote: note, preset: self.currentInstrument, durationSeconds: hold, strength: self.volume * self.currentInstrument.strength * (isHarmony ? 0.7 : 1)) }
+                } else { soundingNotes.remove(note); self.haptics.stopNote(midiNote: note) }
                 self.index += 1; self.progress = min(1, event.time / max(0.01, self.duration))
             }
-            self.haptics.stopAllNotes(); self.isPlaying = false
+            self.haptics.stopAllNotes(); self.soundingNotes.removeAll(); self.isPlaying = false
             if self.index >= self.events.count && !self.loop { self.progress = 1; self.index = 0 }
         }
     }

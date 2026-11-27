@@ -10,13 +10,27 @@ private typealias ActuationPlay = @convention(c) (UnsafeMutableRawPointer, Unsaf
 
 @MainActor
 final class HapticEngine {
+    enum FrequencyMode: String, CaseIterable, Identifiable {
+        case standard = "Standard (100–4000 Hz)"
+        case extended = "Extended (100–8000 Hz, experimental)"
+        var id: String { rawValue }
+    }
+    var frequencyMode: FrequencyMode = .standard
+    var debugEnabled = false
+    private(set) var minimumFrameMilliseconds = 10.0
+    private(set) var maximumFrameMilliseconds = 10.0
     private let library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
     private var actuator: CFTypeRef?
     private var process: Process?
     private struct Voice { let preset: InstrumentPreset; let strength: Double; let started: Date; let duration: Double; var frequency: Double }
     private var activeNotes: [Int: Task<Void, Never>] = [:]
     private var voices: [Int: Voice] = [:]
-    private var renderTask: Task<Void, Never>?
+    private var renderTimer: DispatchSourceTimer?
+    private var eventBuffer = [Int](repeating: 0, count: 64)
+    private var eventRead = 0
+    private var eventWrite = 0
+    private var eventCount = 0
+    private let renderQueue = DispatchQueue(label: "haptic.render", qos: .userInteractive)
 
     private func symbol<T>(_ name: String, as type: T.Type) -> T? {
         guard let library, let pointer = dlsym(library, name) else { return nil }
@@ -33,17 +47,21 @@ final class HapticEngine {
         return nil
     }
     func playWelcomeMelody() async {
-        for note in [60, 64, 67, 72, 71, 67, 64, 60] { await playNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.85); try? await Task.sleep(nanoseconds: 120_000_000) }
+        var notes = [60, 64, 67, 72, 71, 67, 64, 60]
+        if frequencyMode == .extended { notes.append(contentsOf: [84, 96, 108]) }
+        for note in notes { await playNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.85); try? await Task.sleep(nanoseconds: 120_000_000) }
     }
     func playNote(midiNote: Int, preset: InstrumentPreset, durationSeconds: Double, strength: Double = 0.8) async {
         let task = Task { do { try await Task.sleep(nanoseconds: UInt64(max(0.03, durationSeconds) * 1_000_000_000)) } catch {} }
         activeNotes[midiNote]?.cancel()
         activeNotes[midiNote] = task
-        voices[midiNote] = Voice(preset: preset, strength: strength, started: Date(), duration: max(0.03, durationSeconds), frequency: 440 * pow(2, Double(midiNote - 69) / 12))
+        enqueue(midiNote)
+        let hz = 440 * pow(2, Double(midiNote - 69) / 12)
+        voices[midiNote] = Voice(preset: preset, strength: strength, started: Date(), duration: max(0.03, durationSeconds), frequency: min(frequencyMode == .standard ? 3951 : 8000, max(98, hz)))
         startRenderer()
     }
-    func stopNote(midiNote: Int) { activeNotes.removeValue(forKey: midiNote)?.cancel(); voices.removeValue(forKey: midiNote); if activeNotes.isEmpty { renderTask?.cancel(); renderTask = nil } }
-    func stopAllNotes() { activeNotes.values.forEach { $0.cancel() }; activeNotes.removeAll(); voices.removeAll(); renderTask?.cancel(); renderTask = nil }
+    func stopNote(midiNote: Int) { activeNotes.removeValue(forKey: midiNote)?.cancel(); voices.removeValue(forKey: midiNote); if activeNotes.isEmpty { stopRenderer() } }
+    func stopAllNotes() { activeNotes.values.forEach { $0.cancel() }; activeNotes.removeAll(); voices.removeAll(); stopRenderer() }
     func glideToNote(from: Int, to: Int, preset: InstrumentPreset, portamentoMilliseconds: Double = 40) async {
         let fromHz = 440 * pow(2, Double(from - 69) / 12), toHz = 440 * pow(2, Double(to - 69) / 12)
         activeNotes[from]?.cancel(); activeNotes.removeValue(forKey: from); voices.removeValue(forKey: from)
@@ -62,32 +80,53 @@ final class HapticEngine {
         startRenderer()
     }
     func stopAllTones() { stopAllNotes(); if let process, process.isRunning { process.terminate() }; process = nil }
+    private func enqueue(_ note: Int) {
+        if eventCount >= eventBuffer.count { eventRead = (eventRead + 1) % eventBuffer.count; eventCount -= 1 }
+        eventBuffer[eventWrite] = note; eventWrite = (eventWrite + 1) % eventBuffer.count; eventCount += 1
+    }
     private func startRenderer() {
-        guard renderTask == nil else { return }
-        renderTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                self.renderFrame()
-                try? await Task.sleep(nanoseconds: 20_000_000)
-            }
+        guard renderTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: renderQueue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .microseconds(500))
+        timer.setEventHandler { [weak self] in
+            Task { @MainActor in self?.renderFrame() }
         }
+        renderTimer = timer; timer.resume()
+    }
+    private func stopRenderer() {
+        renderTimer?.setEventHandler {}
+        renderTimer?.cancel(); renderTimer = nil
     }
     private func renderFrame() {
         guard let actuator = openActuator(), let createFn = symbol("MTActuationCreateFromDictionary", as: ActuationCreate.self), let playFn = symbol("MTActuationActuate", as: ActuationPlay.self) else { return }
         let now = Date()
         for (note, task) in Array(activeNotes) where task.isCancelled || now.timeIntervalSince(voices[note]?.started ?? now) >= (voices[note]?.duration ?? 0) { activeNotes.removeValue(forKey: note)?.cancel(); voices.removeValue(forKey: note) }
-        if voices.isEmpty { renderTask?.cancel(); renderTask = nil; return }
-        let currentVoices = Array(voices.values.prefix(4))
-        let tones: [[String: Any]] = currentVoices.flatMap { voice in voice.preset.partials.map { partial in
+        if voices.isEmpty { stopRenderer(); return }
+        let sortedVoices = voices.sorted { $0.value.frequency > $1.value.frequency }
+        let melodyNote = sortedVoices.first?.key
+        let currentVoices = sortedVoices.prefix(4).map(\.value)
+        var candidates: [(amplitude: Double, tone: [String: Any])] = currentVoices.flatMap { voice in voice.preset.partials.map { partial in
             let elapsed = now.timeIntervalSince(voice.started)
             let attack = voice.preset.attackTime > 0 ? min(1, elapsed / voice.preset.attackTime) : 1
             let decay = voice.preset.decayTime > 0 ? max(0.25, 1 - elapsed / voice.duration * 0.5) : 1
-            return ["Type": "Sine", "Amplitude": partial.amplitude * attack * decay, "DurationMS": 35.0, "DelayMS": 0.0, "FrequencykHz": voice.frequency * partial.multiplier / 1000]
+            let frequency = min(frequencyMode == .standard ? 3951 : 8000, max(98, voice.frequency * partial.multiplier))
+            let note = sortedVoices.first(where: { $0.value.started == voice.started })?.key
+            let budget = note == melodyNote ? 0.6 : 0.4
+            let amplitude = partial.amplitude * attack * decay * budget
+            return (amplitude, ["Type": "Sine", "Amplitude": amplitude, "DurationMS": 15.0, "DelayMS": 0.0, "FrequencykHz": frequency / 1000])
         }}
+        let sum = candidates.reduce(0) { $0 + $1.amplitude }
+        if sum > 1 { candidates = candidates.map { candidate in
+            let amplitude = candidate.amplitude / sum
+            var tone = candidate.tone; tone["Amplitude"] = amplitude
+            return (amplitude: amplitude, tone: tone)
+        } }
+        let tones = candidates.sorted { $0.amplitude > $1.amplitude }.prefix(6).map(\.tone)
         let strength = currentVoices.map(\.strength).max() ?? 0.8
-        let shape: [String: Any] = ["BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": 35.0], "Tones": tones]
+        let shape: [String: Any] = ["BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": 15.0], "Tones": tones]
         guard let actuation = createFn(shape as CFDictionary, 0) else { return }
         _ = playFn(actuation, Unmanaged.passUnretained(actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)
         Unmanaged<AnyObject>.fromOpaque(actuation).release()
+        if debugEnabled { let ms = Date().timeIntervalSince(now) * 1000; minimumFrameMilliseconds = min(minimumFrameMilliseconds, ms); maximumFrameMilliseconds = max(maximumFrameMilliseconds, ms) }
     }
 }

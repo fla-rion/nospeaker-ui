@@ -4,7 +4,7 @@ import Foundation
 
 @MainActor
 final class UpdateManager: ObservableObject {
-    static let currentVersion = "1.4.0"
+    static let currentVersion = "1.5.0"
     @Published var latestRelease: ReleaseInfo? = nil
     @Published var isChecking = false
     @Published var downloadProgress: Double = 0.0

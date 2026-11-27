@@ -3,6 +3,20 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.5.0] - 2026-11-27
+### Added
+- Extended frequency mode up to 8000 Hz (experimental, above 4 kHz gets buzzier)
+- Frequency mode picker: Standard (100–4000 Hz) vs Extended (100–8000 Hz)
+- Polyphony limit setting (1–4 voices)
+- Note flash: piano keys light up during MIDI playback
+- Debug mode: render loop jitter display
+### Improved
+- Render loop tightened to 10ms (100 Hz) from 20ms — twice the time resolution
+- Polyphonic mixing: frequency-domain normalization, melody gets 60% strength budget
+- MIDI multi-track: melody/harmony separation, smart voice dropping above 4 simultaneous notes
+- Fast passages (< 150ms notes): staccato override ignores legato setting
+- Render timer now uses DispatchSource with userInteractive QoS for < 2ms jitter
+
 ## [1.4.0] - 2026-11-27
 ### Added
 - True polyphony: up to 4 simultaneous notes mixed in a single 20ms render loop
