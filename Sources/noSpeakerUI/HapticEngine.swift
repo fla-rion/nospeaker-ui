@@ -24,6 +24,7 @@ final class HapticEngine {
     private var process: Process?
     private struct Voice { let preset: InstrumentPreset; let strength: Double; let started: Date; let duration: Double; var frequency: Double }
     private var activeNotes: [Int: Task<Void, Never>] = [:]
+    private var sustainedNotes = Set<Int>()
     private var voices: [Int: Voice] = [:]
     private var renderTimer: DispatchSourceTimer?
     private var eventBuffer = [Int](repeating: 0, count: 64)
@@ -51,21 +52,23 @@ final class HapticEngine {
         if frequencyMode == .extended { notes.append(contentsOf: [84, 96, 108]) }
         for note in notes { await playNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.85); try? await Task.sleep(nanoseconds: 120_000_000) }
     }
-    func playNote(midiNote: Int, preset: InstrumentPreset, durationSeconds: Double, strength: Double = 0.8) async {
+    func playNote(midiNote: Int, preset: InstrumentPreset, durationSeconds: Double, strength: Double = 0.8, sustainUntilStopped: Bool = false) async {
         let task = Task { do { try await Task.sleep(nanoseconds: UInt64(max(0.03, durationSeconds) * 1_000_000_000)) } catch {} }
         activeNotes[midiNote]?.cancel()
         activeNotes[midiNote] = task
+        if sustainUntilStopped { sustainedNotes.insert(midiNote) } else { sustainedNotes.remove(midiNote) }
+        print("HapticEngine: note \(midiNote), preset=\(preset.rawValue), partials=\(preset.partials.count), duration=\(durationSeconds)s, sustained=\(sustainUntilStopped)")
         enqueue(midiNote)
         let hz = 440 * pow(2, Double(midiNote - 69) / 12)
         voices[midiNote] = Voice(preset: preset, strength: strength, started: Date(), duration: max(0.03, durationSeconds), frequency: min(frequencyMode == .standard ? 3951 : 8000, max(98, hz)))
         startRenderer()
     }
-    func stopNote(midiNote: Int) { activeNotes.removeValue(forKey: midiNote)?.cancel(); voices.removeValue(forKey: midiNote); if activeNotes.isEmpty { stopRenderer() } }
-    func stopAllNotes() { activeNotes.values.forEach { $0.cancel() }; activeNotes.removeAll(); voices.removeAll(); stopRenderer() }
-    func glideToNote(from: Int, to: Int, preset: InstrumentPreset, portamentoMilliseconds: Double = 40) async {
+    func stopNote(midiNote: Int) { activeNotes.removeValue(forKey: midiNote)?.cancel(); sustainedNotes.remove(midiNote); voices.removeValue(forKey: midiNote); if activeNotes.isEmpty { stopRenderer() } }
+    func stopAllNotes() { activeNotes.values.forEach { $0.cancel() }; activeNotes.removeAll(); sustainedNotes.removeAll(); voices.removeAll(); stopRenderer() }
+    func glideToNote(from: Int, to: Int, preset: InstrumentPreset, portamentoMilliseconds: Double = 40, sustainUntilStopped: Bool = false) async {
         let fromHz = 440 * pow(2, Double(from - 69) / 12), toHz = 440 * pow(2, Double(to - 69) / 12)
         activeNotes[from]?.cancel(); activeNotes.removeValue(forKey: from); voices.removeValue(forKey: from)
-        await playNote(midiNote: to, preset: preset, durationSeconds: 0.5)
+        await playNote(midiNote: to, preset: preset, durationSeconds: 0.5, sustainUntilStopped: sustainUntilStopped)
         let steps = 4, interval = max(0.01, portamentoMilliseconds / 1000 / Double(steps))
         for step in 1...steps {
             if var voice = voices[to] { voice.frequency = fromHz + (toHz - fromHz) * Double(step) / Double(steps); voices[to] = voice }
@@ -100,7 +103,7 @@ final class HapticEngine {
     private func renderFrame() {
         guard let actuator = openActuator(), let createFn = symbol("MTActuationCreateFromDictionary", as: ActuationCreate.self), let playFn = symbol("MTActuationActuate", as: ActuationPlay.self) else { return }
         let now = Date()
-        for (note, task) in Array(activeNotes) where task.isCancelled || now.timeIntervalSince(voices[note]?.started ?? now) >= (voices[note]?.duration ?? 0) { activeNotes.removeValue(forKey: note)?.cancel(); voices.removeValue(forKey: note) }
+        for (note, task) in Array(activeNotes) where task.isCancelled || (!sustainedNotes.contains(note) && now.timeIntervalSince(voices[note]?.started ?? now) >= (voices[note]?.duration ?? 0)) { activeNotes.removeValue(forKey: note)?.cancel(); sustainedNotes.remove(note); voices.removeValue(forKey: note) }
         if voices.isEmpty { stopRenderer(); return }
         let sortedVoices = voices.sorted { $0.value.frequency > $1.value.frequency }
         let melodyNote = sortedVoices.first?.key

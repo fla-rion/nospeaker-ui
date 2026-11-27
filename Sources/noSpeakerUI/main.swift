@@ -63,10 +63,10 @@ final class SpeakerController: ObservableObject {
         let previous = activeKeys.first
         activeKeys.insert(midiNote)
         if legato, let previous, previous != midiNote {
-            Task { await haptics.glideToNote(from: previous, to: midiNote, preset: keyboardInstrument, portamentoMilliseconds: portamentoMilliseconds) }
+            Task { await haptics.glideToNote(from: previous, to: midiNote, preset: keyboardInstrument, portamentoMilliseconds: portamentoMilliseconds, sustainUntilStopped: true) }
             return
         }
-        Task { await haptics.playNote(midiNote: midiNote, preset: keyboardInstrument, durationSeconds: 0.35) }
+        Task { await haptics.playNote(midiNote: midiNote, preset: keyboardInstrument, durationSeconds: 0.35, sustainUntilStopped: true) }
     }
     func releaseNote(_ midiNote: Int) {
         activeKeys.remove(midiNote); haptics.stopNote(midiNote: midiNote)
@@ -78,6 +78,7 @@ final class SpeakerController: ObservableObject {
         Task { await haptics.playTone(frequency: frequency, durationSeconds: 0.25, preset: .theremin) }
     }
     func endTheremin() { lastThereminFrequency = nil; haptics.stopAllTones() }
+    func logMIDI(_ message: String) { append("MIDI: \(message)\n") }
 
     private func addModes(to arguments: inout [String]) {
         if darkMode { arguments.append("--dark") }
@@ -242,6 +243,7 @@ struct ContentView: View {
         .padding(20)
         .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { showingSettingsDocs = true }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); showingUpdateSheet = updateManager.latestRelease?.isNewer == true } } } }
         .onAppear {
+            midiPlayer.onLog = { message in controller.logMIDI(message) }
             installKeyboardMonitor()
             Task {
                 try? await Task.sleep(nanoseconds: 300_000_000)

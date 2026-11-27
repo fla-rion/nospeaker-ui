@@ -16,18 +16,35 @@ struct BuiltInPiece: Identifiable {
     @Published var selectedURL: URL?; @Published var currentNoteLabel = ""
     @Published var polyphonyLimit = 3
     @Published private(set) var flashingNotes = Set<Int>()
+    var onLog: ((String) -> Void)?
     private let haptics = HapticEngine(); private var events: [Event] = []; private var index = 0; private var timer: Task<Void, Never>?; private var duration = 0.0
     private struct Event { let time: Double; let note: Int; let on: Bool; let velocity: Int }
     private var soundingNotes = Set<Int>()
-    func choose(_ piece: BuiltInPiece) { guard let url = Bundle.main.resourceURL?.appendingPathComponent("midi").appendingPathComponent(piece.filename) else { return }; selectedURL = url; currentTrackName = piece.name }
+    func choose(_ piece: BuiltInPiece) {
+        guard let url = Bundle.main.url(forResource: piece.filename, withExtension: nil, subdirectory: "midi") else { onLog?("Built-in MIDI resource missing: midi/\(piece.filename)"); return }
+        onLog?("Built-in MIDI URL: \(url.path)")
+        selectedURL = url; currentTrackName = piece.name; stop()
+    }
     func openFile() {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.init(filenameExtension: "mid")!, .init(filenameExtension: "midi")!]; panel.allowsMultipleSelection = false
-        panel.begin { [weak self] response in guard response == .OK, let url = panel.url else { return }; Task { @MainActor in self?.selectedURL = url; self?.currentTrackName = url.deletingPathExtension().lastPathComponent } }
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in self?.selectedURL = url; self?.currentTrackName = url.deletingPathExtension().lastPathComponent; self?.stop(); self?.onLog?("Selected MIDI file: \(url.path)") }
+        }
     }
     func play() {
-        guard !isPlaying, let selectedURL, let data = try? Data(contentsOf: selectedURL) else { return }
-        if index == 0 || progress >= 1 { guard let parsed = Self.parse(data) else { return }; events = parsed.events; duration = parsed.duration }
-        guard !events.isEmpty else { return }; isPlaying = true
+        guard !isPlaying else { return }
+        guard let selectedURL else { onLog?("No MIDI file selected"); return }
+        let data: Data
+        do { data = try Data(contentsOf: selectedURL) }
+        catch { onLog?("Could not read MIDI file at \(selectedURL.path): \(error.localizedDescription)"); return }
+        if index == 0 || progress >= 1 {
+            guard let parsed = Self.parse(data) else { onLog?("Could not parse MIDI file (invalid header, track, or event data): \(selectedURL.lastPathComponent)"); return }
+            events = parsed.events; duration = parsed.duration
+            onLog?("Parsed \(events.count) note events, duration \(String(format: "%.2f", duration))s from \(selectedURL.lastPathComponent)")
+        }
+        guard !events.isEmpty else { onLog?("MIDI file contains no note events: \(selectedURL.lastPathComponent)"); return }
+        isPlaying = true
         timer = Task { [weak self] in
             guard let self else { return }
             var elapsed = 0.0
@@ -49,8 +66,9 @@ struct BuiltInPiece: Identifiable {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { self.flashingNotes.remove(note) }
                     self.currentNoteLabel = "Playing: \(Self.noteName(note)) (\(self.currentInstrument.rawValue))"
                     let nextOff = self.events[(self.index + 1)...].first(where: { !$0.on && $0.note == event.note })
-                    let hold = max(0.04, ((nextOff?.time ?? (event.time + 0.2)) - event.time) / self.tempo * self.currentInstrument.noteDurationMultiplier)
-                    let noteLength = max(0, ((nextOff?.time ?? event.time + 0.2) - event.time) / self.tempo)
+                    let actualEnd = nextOff?.time ?? self.duration
+                    let hold = max(0.3, (actualEnd - event.time) / self.tempo * self.currentInstrument.noteDurationMultiplier)
+                    let noteLength = max(0, (actualEnd - event.time) / self.tempo)
                     if noteLength >= 0.15, self.legato, let prev = self.events[..<self.index].last(where: { $0.on && $0.time < event.time }), let prevOff = self.events[self.index...].first(where: { !$0.on && $0.note == prev.note && $0.time > event.time }) {
                         if prevOff.time > event.time { await self.haptics.glideToNote(from: prev.note + self.transpose, to: note, preset: self.currentInstrument, portamentoMilliseconds: noteLength < 0.4 ? self.portamentoMilliseconds / 2 : self.portamentoMilliseconds) }
                     } else { let isHarmony = soundingNotes.contains(where: { $0 > note }); await self.haptics.playNote(midiNote: note, preset: self.currentInstrument, durationSeconds: hold, strength: self.volume * self.currentInstrument.strength * (isHarmony ? 0.7 : 1)) }

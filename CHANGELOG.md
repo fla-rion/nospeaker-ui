@@ -3,6 +3,13 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.5.1] - 2026-11-27
+### Fixed
+- Keyboard notes sustain until their key is released, including legato transitions
+- MIDI notes use their actual note-off timing and log file loading and parse errors
+- Built-in MIDI resources resolve from the app bundle and selected MIDI presets are logged during playback
+- MIDI file selection and playback state updates run through the main actor
+
 ## [1.5.0] - 2026-11-27
 ### Added
 - Extended frequency mode up to 8000 Hz (experimental, above 4 kHz gets buzzier)
