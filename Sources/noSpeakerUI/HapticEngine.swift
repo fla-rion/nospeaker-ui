@@ -99,7 +99,8 @@ final class HapticEngine {
                 var id: UInt64 = 0
                 guard idFn(ptr, &id) == 0,
                       let actuator = createFn(id)?.takeRetainedValue(), openFn(actuator) == 0 else { continue }
-                self.devices.append(TrackpadDevice(id: id, isBuiltIn: builtInFn(ptr), actuator: actuator, devicePtr: ptr))
+                let isBuiltIn = builtInFn(ptr)
+                self.devices.append(TrackpadDevice(id: id, isBuiltIn: isBuiltIn, actuator: actuator, devicePtr: ptr))
             }
             let found = self.devices.map { (id: $0.id, name: $0.isBuiltIn ? "Built-in Trackpad" : "Magic Trackpad", isBuiltIn: $0.isBuiltIn) }
             DispatchQueue.main.async { self.onTrackpadsChanged(found) }
@@ -115,25 +116,25 @@ final class HapticEngine {
         }
     }
 
-    // Synchronous device open — called from renderFrame on queue when discoverDevices() hasn't finished
+    // Synchronous device open — v1.3 approach: no IsBuiltIn filter, no MTDeviceStart
+    // Just open the first device that responds — works on all Mac models
     private func openDevicesSynchronously() {
         guard let listFn = getSymbol("MTDeviceCreateList", as: DeviceList.self),
               let idFn = getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
-              let builtInFn = getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self),
-              let startFn = getSymbol("MTDeviceStart", as: DeviceStart.self),
               let createFn = getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
               let openFn = getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
               let list = listFn()?.takeRetainedValue() else { return }
         cachedDeviceList = list
+        let builtInFn = getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self)
         for index in 0..<CFArrayGetCount(list) {
             guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
             let ptr = UnsafeMutableRawPointer(mutating: raw)
-            _ = startFn(ptr, 0)
             var id: UInt64 = 0
             guard idFn(ptr, &id) == 0,
                   let actuator = createFn(id)?.takeRetainedValue(),
                   openFn(actuator) == 0 else { continue }
-            devices.append(TrackpadDevice(id: id, isBuiltIn: builtInFn(ptr), actuator: actuator, devicePtr: ptr))
+            let isBuiltIn = builtInFn?(ptr) ?? true  // assume built-in if unknown
+            devices.append(TrackpadDevice(id: id, isBuiltIn: isBuiltIn, actuator: actuator, devicePtr: ptr))
         }
     }
 
