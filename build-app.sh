@@ -31,12 +31,12 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key><string>com.a90.nospeakerui</string>
     <key>CFBundleName</key><string>noSpeakerUI</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.5.1</string>
-    <key>CFBundleVersion</key><string>151</string>
+    <key>CFBundleShortVersionString</key><string>1.5.3</string>
+    <key>CFBundleVersion</key><string>153</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 PLIST
-codesign --force --deep --sign - "$app"
+codesign --force --deep --sign - --entitlements noSpeakerUI.entitlements "$app"
 echo "Built universal app at $app"

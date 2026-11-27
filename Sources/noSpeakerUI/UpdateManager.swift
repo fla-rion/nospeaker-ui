@@ -4,7 +4,9 @@ import Foundation
 
 @MainActor
 final class UpdateManager: ObservableObject {
-    static let currentVersion = "1.5.0"
+    static var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+    }
     @Published var latestRelease: ReleaseInfo? = nil
     @Published var isChecking = false
     @Published var downloadProgress: Double = 0.0

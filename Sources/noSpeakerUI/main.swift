@@ -187,16 +187,20 @@ private struct PianoKey: Identifiable {
 }
 
 struct ContentView: View {
+    enum ActiveSheet: Identifiable {
+        case update, settings
+        var id: Int { hashValue }
+    }
+
     @StateObject private var controller = SpeakerController()
     @StateObject private var updateManager = UpdateManager()
     @StateObject private var midiPlayer = MIDIPlayer()
-    @State private var showingUpdateSheet = false
+    @State private var activeSheet: ActiveSheet? = nil
     @State private var selectedTab = 0
     @State private var heldKeys = Set<Int>()
     @State private var mouseHeldKeys = Set<Int>()
     @State private var keyMonitor: Any?
     @State private var thereminPosition = 0.5
-    @State private var showingSettingsDocs = false
 
     private var keyboardNotes: [PianoKey] { (((controller.octave + 1) * 12)...(((controller.octave + 1) * 12) + 11)).map { midi in
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -241,7 +245,7 @@ struct ContentView: View {
             }.frame(minHeight: 125)
         }
         .padding(20)
-        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { showingSettingsDocs = true }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); showingUpdateSheet = updateManager.latestRelease?.isNewer == true } } } }
+        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { activeSheet = .settings }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); if updateManager.latestRelease?.isNewer == true { activeSheet = .update } } } } }
         .onAppear {
             midiPlayer.onLog = { message in controller.logMIDI(message) }
             installKeyboardMonitor()
@@ -249,12 +253,16 @@ struct ContentView: View {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 await controller.playWelcomeMelody()
                 await updateManager.checkForUpdates()
-                showingUpdateSheet = updateManager.latestRelease?.isNewer == true
+                if updateManager.latestRelease?.isNewer == true { activeSheet = .update }
             }
         }
         .onDisappear { removeKeyboardMonitor(); if controller.midiEnabled { controller.midiEnabled = false }; controller.stop() }
-        .sheet(isPresented: $showingUpdateSheet) { UpdateSheet(manager: updateManager) }
-        .sheet(isPresented: $showingSettingsDocs) { SettingsDocSheet() }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .update: UpdateSheet(manager: updateManager)
+            case .settings: SettingsDocSheet()
+            }
+        }
     }
 
     private var controls: some View {
