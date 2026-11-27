@@ -13,6 +13,24 @@ private typealias ActuationCreate = @convention(c) (CFDictionary, Int32) -> Unsa
 private typealias ActuationPlay = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer, UInt32, Float, Float) -> Int32
 
 final class HapticEngine {
+    enum TrackpadAssignment: String, CaseIterable, Identifiable {
+        case auto = "Auto (best)"
+        case builtIn = "Built-in only"
+        case external = "External only"
+        case split = "Split: melody=built-in, harmony=external"
+        var id: String { rawValue }
+    }
+    private struct TrackpadDevice {
+        let id: UInt64
+        let isBuiltIn: Bool
+        let actuator: CFTypeRef
+        let devicePtr: UnsafeMutableRawPointer
+    }
+    var onVoicesChanged: ([(frequency: Double, amplitude: Double)]) -> Void = { _ in }
+    var onTrackpadsChanged: ([(id: UInt64, name: String, isBuiltIn: Bool)]) -> Void = { _ in }
+    var trackpadAssignment: TrackpadAssignment = .auto
+    private var devices: [TrackpadDevice] = []
+
     enum FrequencyMode: String, CaseIterable, Identifiable {
         case standard = "Standard (100–4000 Hz)"
         case extended = "Extended (100–8000 Hz, experimental)"
@@ -43,9 +61,7 @@ final class HapticEngine {
     private var voices: [Int: VoiceState] = [:]
     private var renderTimer: DispatchSourceTimer?
     private let library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
-    private var cachedActuator: CFTypeRef?
     private var cachedDeviceList: CFArray?  // retain to keep device ptrs valid
-    private var cachedDevicePtr: UnsafeMutableRawPointer?
 
     private var currentFrequencyMode: FrequencyMode {
         configurationLock.lock(); defer { configurationLock.unlock() }; return _frequencyMode
@@ -59,41 +75,41 @@ final class HapticEngine {
         return unsafeBitCast(pointer, to: type)
     }
 
-    private func getActuator() -> CFTypeRef? {
-        if let cachedActuator { return cachedActuator }
-        guard let listFn = getSymbol("MTDeviceCreateList", as: DeviceList.self),
-              let idFn = getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
-              let builtInFn = getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self),
-              let startFn = getSymbol("MTDeviceStart", as: DeviceStart.self),
-              let createFn = getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
-              let openFn = getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
-              let list = listFn()?.takeRetainedValue() else { return nil }
-        cachedDeviceList = list  // retain so device ptrs stay valid
-        for index in 0..<CFArrayGetCount(list) {
-            guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
-            let ptr = UnsafeMutableRawPointer(mutating: raw)
-            guard builtInFn(ptr) else { continue }
-            _ = startFn(ptr, 0)
-            var id: UInt64 = 0
-            guard idFn(ptr, &id) == 0,
-                  let candidate = createFn(id)?.takeRetainedValue(),
-                  openFn(candidate) == 0 else { continue }
-            cachedDevicePtr = ptr
-            cachedActuator = candidate
-            return candidate
+    func discoverDevices() {
+        queue.async { [weak self] in
+            guard let self,
+                  let listFn = self.getSymbol("MTDeviceCreateList", as: DeviceList.self),
+                  let idFn = self.getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
+                  let builtInFn = self.getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self),
+                  let startFn = self.getSymbol("MTDeviceStart", as: DeviceStart.self),
+                  let createFn = self.getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
+                  let openFn = self.getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
+                  let list = listFn()?.takeRetainedValue() else { return }
+            self.devices.forEach { device in
+                if let stopFn = self.getSymbol("MTDeviceStop", as: DeviceStop.self) { _ = stopFn(device.devicePtr, 0) }
+            }
+            self.devices.removeAll()
+            self.cachedDeviceList = list
+            for index in 0..<CFArrayGetCount(list) {
+                guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
+                let ptr = UnsafeMutableRawPointer(mutating: raw)
+                _ = startFn(ptr, 0)
+                var id: UInt64 = 0
+                guard idFn(ptr, &id) == 0,
+                      let actuator = createFn(id)?.takeRetainedValue(), openFn(actuator) == 0 else { continue }
+                self.devices.append(TrackpadDevice(id: id, isBuiltIn: builtInFn(ptr), actuator: actuator, devicePtr: ptr))
+            }
+            let found = self.devices.map { (id: $0.id, name: $0.isBuiltIn ? "Built-in Trackpad" : "Magic Trackpad", isBuiltIn: $0.isBuiltIn) }
+            DispatchQueue.main.async { self.onTrackpadsChanged(found) }
         }
-        return nil
     }
 
     func close() {
         queue.sync {
             stopRenderer()
-            if let ptr = cachedDevicePtr,
-               let stopFn = getSymbol("MTDeviceStop", as: DeviceStop.self) {
-                _ = stopFn(ptr, 0)
-            }
-            cachedActuator = nil
-            cachedDevicePtr = nil
+            if let stopFn = getSymbol("MTDeviceStop", as: DeviceStop.self) { devices.forEach { _ = stopFn($0.devicePtr, 0) } }
+            devices.removeAll()
+            cachedDeviceList = nil
         }
     }
 
@@ -161,16 +177,20 @@ final class HapticEngine {
         for (note, voice) in voices where voice.duration >= 0 && now - voice.startTime >= voice.duration {
             voices.removeValue(forKey: note)
         }
-        guard !voices.isEmpty else { stopRenderer(); return }
-        guard let actuator = getActuator(),
+        guard !voices.isEmpty else { DispatchQueue.main.async { self.onVoicesChanged([]) }; stopRenderer(); return }
+        guard !devices.isEmpty,
               let createFn = getSymbol("MTActuationCreateFromDictionary", as: ActuationCreate.self),
               let playFn = getSymbol("MTActuationActuate", as: ActuationPlay.self) else { return }
 
         let sorted = voices.sorted { $0.value.frequency > $1.value.frequency }
         let melody = sorted.first?.key
         let active = Array(sorted.prefix(4))
+        let visual = active.map { ($0.value.frequency, min(1, max(0, $0.value.strength))) }
+        DispatchQueue.main.async { self.onVoicesChanged(visual) }
         let polyphonic = active.count > 1
         var tones: [[String: Any]] = []
+        var melodyTones: [[String: Any]] = []
+        var harmonyTones: [[String: Any]] = []
         for (note, voice) in active {
             let elapsed = now - voice.startTime
             let attack = voice.preset.attackTime > 0 ? min(1, elapsed / voice.preset.attackTime) : 1
@@ -178,15 +198,26 @@ final class HapticEngine {
             for partial in voice.preset.partials.prefix(2) {
                 let frequency = clampHz(voice.frequency * partial.multiplier)
                 let amplitude = min(0.95, partial.amplitude * attack * budget * voice.strength)
-                tones.append(["Type": "Sine", "Amplitude": amplitude, "DurationMS": 12.0, "DelayMS": 0.0, "FrequencykHz": frequency / 1000])
+                let tone: [String: Any] = ["Type": "Sine", "Amplitude": amplitude, "DurationMS": 12.0, "DelayMS": 0.0, "FrequencykHz": frequency / 1000]
+                tones.append(tone)
+                if note == melody { melodyTones.append(tone) } else { harmonyTones.append(tone) }
             }
         }
         guard !tones.isEmpty else { return }
-        let shape: [String: Any] = ["Tones": Array(tones.prefix(6))]
         let strength = active.map { $0.value.strength }.max() ?? 0.8
-        if let actuation = createFn(shape as CFDictionary, 0) {
-            _ = playFn(actuation, Unmanaged.passUnretained(actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)
+        func play(_ tones: [[String: Any]], on device: TrackpadDevice) {
+            guard !tones.isEmpty, let actuation = createFn(["Tones": Array(tones.prefix(6))] as CFDictionary, 0) else { return }
+            _ = playFn(actuation, Unmanaged.passUnretained(device.actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)
             Unmanaged<AnyObject>.fromOpaque(actuation).release()
+        }
+        if trackpadAssignment == .split {
+            let builtIn = devices.first(where: \.isBuiltIn)
+            let external = devices.first(where: { !$0.isBuiltIn })
+            if let builtIn { play(melodyTones, on: builtIn) }
+            if let external { play(harmonyTones, on: external) }
+        } else {
+            let target: TrackpadDevice? = trackpadAssignment == .builtIn ? devices.first(where: \.isBuiltIn) : trackpadAssignment == .external ? devices.first(where: { !$0.isBuiltIn }) : devices.first(where: \.isBuiltIn) ?? devices.first
+            if let target { play(tones, on: target) }
         }
         if currentDebugEnabled {
             print("HapticEngine: rendered \(active.count) voice(s) in \((CACurrentMediaTime() - now) * 1000) ms")

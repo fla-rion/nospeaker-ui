@@ -45,8 +45,16 @@ final class CertificateInstaller: ObservableObject {
         let pipe = Pipe()
         proc.standardError = pipe
         do {
-            try proc.run()
-            proc.waitUntilExit()
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                proc.terminationHandler = { _ in continuation.resume() }
+                do { try proc.run() }
+                catch {
+                    proc.terminationHandler = nil
+                    installError = "Could not run security tool: \(error.localizedDescription)"
+                    continuation.resume()
+                }
+            }
+            guard proc.processIdentifier != 0 else { return }
             if proc.terminationStatus == 0 {
                 needsInstall = false
                 installed = true

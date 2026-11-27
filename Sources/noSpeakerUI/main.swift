@@ -25,6 +25,12 @@ final class SpeakerController: ObservableObject {
     @Published var selectedMIDISource: MIDIEndpointRef = 0 { didSet { if midiEnabled { configureMIDI() } } }
     @Published var keyboardInstrument = InstrumentPreset.piano
     @Published var octave = 4
+    @Published var sustainPedal = false
+    @Published var visualVoices: [(frequency: Double, amplitude: Double)] = []
+    @Published var trackpadAssignment: HapticEngine.TrackpadAssignment = .auto { didSet { haptics.trackpadAssignment = trackpadAssignment } }
+    @Published var availableTrackpads: [(id: UInt64, name: String, isBuiltIn: Bool)] = []
+    @Published var keyboardTempo = 1.0
+    @Published var keyboardVolume = 0.8
     @Published var legato = false
     @Published var portamentoMilliseconds = 40.0
     @Published var frequencyMode: HapticEngine.FrequencyMode = .standard { didSet { haptics.frequencyMode = frequencyMode } }
@@ -37,9 +43,10 @@ final class SpeakerController: ObservableObject {
     private var midiClient = MIDIClientRef()
     private var midiPort = MIDIPortRef()
     private var activeKeys = Set<Int>()
+    private var sustainedKeys = Set<Int>()
     private var lastThereminFrequency: Double?
 
-    init() { loadVoices(); refreshMIDISources() }
+    init() { haptics.onVoicesChanged = { [weak self] in self?.visualVoices = $0 }; haptics.onTrackpadsChanged = { [weak self] in self?.availableTrackpads = $0 }; loadVoices(); refreshMIDISources(); haptics.discoverDevices() }
 
     func speak() {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -70,8 +77,24 @@ final class SpeakerController: ObservableObject {
         haptics.startNoteSustained(midiNote: midiNote, preset: keyboardInstrument)
     }
     func releaseNote(_ midiNote: Int) {
+        if sustainPedal { sustainedKeys.insert(midiNote); return }
         activeKeys.remove(midiNote); haptics.stopNote(midiNote: midiNote)
     }
+    func setSustainPedal(_ on: Bool) {
+        if !on {
+            sustainedKeys.forEach { haptics.stopNote(midiNote: $0); activeKeys.remove($0) }
+            sustainedKeys.removeAll()
+        }
+        sustainPedal = on
+    }
+    func apply(_ preset: Preset) {
+        if let instrument = InstrumentPreset(rawValue: preset.instrument) { keyboardInstrument = instrument }
+        octave = preset.octave; keyboardTempo = preset.tempo; keyboardVolume = preset.volume
+        portamentoMilliseconds = preset.portamentoMilliseconds; legato = preset.legato
+        if let mode = HapticEngine.FrequencyMode(rawValue: preset.frequencyMode) { frequencyMode = mode }
+    }
+    func rescanTrackpads() { haptics.discoverDevices() }
+    func makePreset(name: String) -> Preset { Preset(name: name, instrument: keyboardInstrument.rawValue, tempo: keyboardTempo, volume: keyboardVolume, octave: octave, portamentoMilliseconds: portamentoMilliseconds, legato: legato, frequencyMode: frequencyMode.rawValue) }
     func theremin(_ position: Double) {
         let frequency = 100 + min(1, max(0, position)) * 3900
         if let lastThereminFrequency, abs(frequency - lastThereminFrequency) <= 10 { return }
@@ -194,7 +217,7 @@ final class SpeakerController: ObservableObject {
             append("Could not start nospeaker: \(error.localizedDescription)\n")
         }
     }
-    private func append(_ value: String) { output += value }
+    private func append(_ value: String) { output += value; if output.count > 100_000 { output = "… [older output trimmed] …\n" + output.suffix(80_000) } }
     private static func displayArgument(_ argument: String) -> String { "'" + argument.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 }
 
@@ -215,6 +238,10 @@ struct ContentView: View {
     @StateObject private var updateManager = UpdateManager()
     @StateObject private var midiPlayer = MIDIPlayer()
     @StateObject private var certInstaller = CertificateInstaller()
+    @StateObject private var presetManager = PresetManager()
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var preferredAppearance: ColorScheme? = nil
+    @State private var selectedPresetID: UUID? = nil
     @State private var activeSheet: ActiveSheet? = nil
     @State private var selectedTab = 0
     @State private var heldKeys = Set<Int>()
@@ -236,7 +263,7 @@ struct ContentView: View {
                     Text("Make your trackpad speak.").foregroundColor(.secondary)
                 }
                 Spacer()
-                Toggle("Dark", isOn: $controller.darkMode).toggleStyle(.switch)
+                Toggle("CLI dark mode", isOn: $controller.darkMode).toggleStyle(.switch)
                 Toggle("Plain", isOn: $controller.plainMode).toggleStyle(.switch)
                 Toggle("External trackpad", isOn: $controller.externalTrackpad).toggleStyle(.switch)
             }
@@ -277,6 +304,10 @@ struct ContentView: View {
                 BookwormView(voices: controller.voices, selectedVoice: controller.selectedVoice, onVoiceChange: { controller.selectedVoice = $0 }, onLog: { controller.logMIDI($0) })
                     .tabItem { Label("📖 Bookworm", systemImage: "book") }.tag(4)
             }
+            .onChange(of: controller.trackpadAssignment) { assignment in midiPlayer.trackpadAssignment = assignment }
+            .onChange(of: selectedTab) { tab in
+                if tab != 1 { heldKeys.forEach { controller.releaseNote($0) }; heldKeys.removeAll(); mouseHeldKeys.forEach { controller.releaseNote($0) }; mouseHeldKeys.removeAll() }
+            }
 
             HStack {
                 Text("Output").font(.headline); Spacer()
@@ -295,9 +326,11 @@ struct ContentView: View {
             }.frame(minHeight: 125)
         }
         .padding(20)
-        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { activeSheet = .settings }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); if updateManager.latestRelease?.isNewer == true { activeSheet = .update } } }.disabled(updateManager.isChecking) } }
+        .preferredColorScheme(preferredAppearance)
+        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Menu("Appearance") { Button("☀️ Light") { preferredAppearance = .light }; Button("🌙 Dark") { preferredAppearance = .dark }; Button("Auto") { preferredAppearance = nil } }; Button("Help") { activeSheet = .settings }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); if updateManager.latestRelease?.isNewer == true { activeSheet = .update } } }.disabled(updateManager.isChecking) } }
         .onAppear {
             midiPlayer.onLog = { message in controller.logMIDI(message) }
+            midiPlayer.trackpadAssignment = controller.trackpadAssignment
             installKeyboardMonitor()
             Task {
                 try? await Task.sleep(nanoseconds: 300_000_000)
@@ -334,6 +367,13 @@ struct ContentView: View {
                     if controller.frequencyMode == .extended { Text("⚠️ Above 4 kHz: quieter and buzzier. May not work on all trackpads.").font(.caption).foregroundColor(.orange) }
                     Text("Render Rate: 10ms / 100 Hz render loop").font(.caption)
                     Toggle("Debug render jitter", isOn: $controller.debugRender)
+                    VStack(alignment: .leading) {
+                        Text("Trackpads").font(.headline)
+                        ForEach(controller.availableTrackpads, id: \.id) { pad in Text("\(pad.name) · \(pad.isBuiltIn ? "Built-in" : "External")") }
+                        Picker("Assignment", selection: $controller.trackpadAssignment) { ForEach(HapticEngine.TrackpadAssignment.allCases) { Text($0.rawValue).tag($0) } }
+                        Button("Rescan") { controller.rescanTrackpads() }
+                        Text(controller.availableTrackpads.isEmpty ? "No trackpads active" : "\(controller.availableTrackpads.count) trackpad\(controller.availableTrackpads.count == 1 ? "" : "s") active").font(.caption).foregroundColor(.secondary)
+                    }
                 }
             }
             TextField("Enter text…", text: $controller.text).textFieldStyle(.roundedBorder).onSubmit(controller.speak)
@@ -352,11 +392,24 @@ struct ContentView: View {
     private var keyboard: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Keyboard synthesizer").font(.headline)
+            HStack { Text("🦶 Sustain").foregroundColor(controller.sustainPedal ? .orange : .secondary); Circle().fill(controller.sustainPedal ? Color.orange : Color.secondary.opacity(0.3)).frame(width: 10, height: 10) }
             Text("Click a key or use A W S E D F T G Y H U J K. Hold to play; release to stop.").foregroundColor(.secondary)
             Picker("Instrument", selection: $controller.keyboardInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 200)
             HStack { Button("<<") { controller.octave = max(1, controller.octave - 1) }.disabled(controller.octave <= 1); Text("Octave \(controller.octave) (C\(controller.octave)–B\(controller.octave))"); Button(">>") { controller.octave = min(7, controller.octave + 1) }.disabled(controller.octave >= 7); Toggle("Legato", isOn: $controller.legato) }
             HStack { Text("Portamento Time"); Slider(value: $controller.portamentoMilliseconds, in: 0...200); Text("\(Int(controller.portamentoMilliseconds)) ms") }
+            HStack {
+                Picker("Preset", selection: $selectedPresetID) {
+                    Text("Choose preset").tag(UUID?.none)
+                    ForEach(presetManager.presets) { Text($0.name).tag(Optional($0.id)) }
+                }.frame(width: 220).onChange(of: selectedPresetID) { id in if let id, let preset = presetManager.presets.first(where: { $0.id == id }) { controller.apply(preset) } }
+                Button("Save Current") { presetManager.newPresetName = ""; presetManager.showingSaveDialog = true }
+                Button("Delete") { if let id = selectedPresetID, let preset = presetManager.presets.first(where: { $0.id == id }) { presetManager.delete(preset); selectedPresetID = nil } }.disabled(selectedPresetID == nil)
+            }
+            if presetManager.showingSaveDialog {
+                HStack { TextField("Preset name", text: $presetManager.newPresetName); Button("Save") { let name = presetManager.newPresetName.trimmingCharacters(in: .whitespacesAndNewlines); if !name.isEmpty { let preset = controller.makePreset(name: name); presetManager.save(preset); selectedPresetID = preset.id }; presetManager.showingSaveDialog = false }; Button("Cancel") { presetManager.showingSaveDialog = false } }
+            }
             piano
+            FrequencyVisualizer(voices: controller.visualVoices)
             Spacer()
         }.padding(.top, 12)
     }
@@ -437,6 +490,7 @@ struct ContentView: View {
             HStack { Text(midiPlayer.currentTrackName.isEmpty ? "No track selected" : midiPlayer.currentTrackName).lineLimit(1); Spacer(); Text("\(Int(midiPlayer.progress * 100))%") }
             Text(midiPlayer.currentNoteLabel).font(.caption).foregroundColor(.secondary)
             ProgressView(value: midiPlayer.progress)
+            FrequencyVisualizer(voices: midiPlayer.visualVoices)
             HStack {
                 Button { midiPlayer.isPlaying ? midiPlayer.pause() : midiPlayer.play() } label: { Label(midiPlayer.isPlaying ? "Pause" : "Play", systemImage: midiPlayer.isPlaying ? "pause.fill" : "play.fill") }
                     .disabled(midiPlayer.selectedURL == nil)
@@ -458,9 +512,15 @@ struct ContentView: View {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
             if event.modifierFlags.contains(.command), event.type == .keyDown, event.keyCode == 126 { controller.octave = min(7, controller.octave + 1); return nil }
             if event.modifierFlags.contains(.command), event.type == .keyDown, event.keyCode == 125 { controller.octave = max(1, controller.octave - 1); return nil }
-            guard selectedTab == 1, let character = event.charactersIgnoringModifiers?.lowercased().first else { return event }
+            guard selectedTab == 1 else { return event }
+            if event.charactersIgnoringModifiers == " " {
+                if event.type == .keyDown && !event.isARepeat { controller.setSustainPedal(true) }
+                if event.type == .keyUp { controller.setSustainPedal(false) }
+                return nil
+            }
+            guard let character = event.charactersIgnoringModifiers?.lowercased().first else { return event }
             let base = (controller.octave + 1) * 12
-            let mapping: [Character: Int] = ["a": base, "w": base+1, "s": base+2, "e": base+3, "d": base+4, "f": base+5, "t": base+6, "g": base+7, "y": base+8, "h": base+9, "u": base+10, "j": base+11, "k": base+11]
+            let mapping: [Character: Int] = ["a": base, "w": base+1, "s": base+2, "e": base+3, "d": base+4, "f": base+5, "t": base+6, "g": base+7, "y": base+8, "h": base+9, "u": base+10, "j": base+11, "k": base+12]
             guard let note = mapping[character] else { return event }
             if event.type == .keyDown {
                 if !event.isARepeat { heldKeys.insert(note); controller.playNote(note) }

@@ -15,9 +15,12 @@ struct BuiltInPiece: Identifiable {
     @Published var transpose = 0; @Published var loop = false; @Published var legato = false; @Published var portamentoMilliseconds = 40.0
     @Published var selectedURL: URL?; @Published var currentNoteLabel = ""
     @Published var polyphonyLimit = 3
+    @Published var visualVoices: [(frequency: Double, amplitude: Double)] = []
+    @Published var trackpadAssignment: HapticEngine.TrackpadAssignment = .auto { didSet { haptics.trackpadAssignment = trackpadAssignment } }
     @Published private(set) var flashingNotes = Set<Int>()
     var onLog: ((String) -> Void)?
     private let haptics = HapticEngine(); private var events: [Event] = []; private var index = 0; private var timer: Task<Void, Never>?; private var duration = 0.0
+    init() { haptics.onVoicesChanged = { [weak self] in self?.visualVoices = $0 }; haptics.discoverDevices() }
     private struct Event { let time: Double; let note: Int; let on: Bool; let velocity: Int }
     private var soundingNotes = Set<Int>()
     func choose(_ piece: BuiltInPiece) {

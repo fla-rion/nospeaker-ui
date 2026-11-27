@@ -112,23 +112,24 @@ private final class BookwormReader: ObservableObject {
     }
 
     private static func split(_ text: String) -> [(text: String, range: NSRange)] {
-        let ns = text as NSString
-        var result: [(String, NSRange)] = [], start = 0
-        for index in 0..<ns.length {
-            let character = ns.substring(with: NSRange(location: index, length: 1))
-            if ".!?\n".contains(character) {
-                let range = NSRange(location: start, length: index + 1 - start)
-                let sentence = ns.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !sentence.isEmpty, let match = ns.range(of: sentence, options: [], range: range).toOptional { result.append((sentence, match)) }
-                start = index + 1
+        let scanner = Scanner(string: text)
+        scanner.charactersToBeSkipped = nil
+        let terminators = CharacterSet(charactersIn: ".!?\n")
+        var sentences: [(String, NSRange)] = []
+        var start = text.startIndex
+        while let range = text.rangeOfCharacter(from: terminators, range: start..<text.endIndex) {
+            let sentence = String(text[start...range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty {
+                let nsRange = NSRange(start...range.lowerBound, in: text)
+                sentences.append((sentence, nsRange))
             }
+            start = text.index(after: range.lowerBound)
         }
-        if start < ns.length {
-            let range = NSRange(location: start, length: ns.length - start)
-            let sentence = ns.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sentence.isEmpty, let match = ns.range(of: sentence, options: [], range: range).toOptional { result.append((sentence, match)) }
+        if start < text.endIndex {
+            let sentence = String(text[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty { sentences.append((sentence, NSRange(start..<text.endIndex, in: text))) }
         }
-        return result
+        return sentences.map { (text: $0.0, range: $0.1) }
     }
 }
 

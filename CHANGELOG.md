@@ -3,6 +3,20 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.8.0] - 2026-11-27
+### Added
+- Presets: save/load instrument+tempo+volume+octave+legato settings as named JSON presets
+- Frequency Visualizer: live bar chart of active haptic frequencies in MIDI and Keyboard tabs
+- Sustain Pedal: hold Space to sustain notes after key release
+- Dark/Light/Auto mode switcher for the app UI
+- Multi-Trackpad: use built-in + external Magic Trackpad simultaneously (split melody/harmony)
+### Fixed
+- Keyboard "k" key now correctly maps to C5 (was B4)
+- CertificateInstaller no longer blocks the UI while security dialog is open
+- Output log now trims itself at 100,000 characters to prevent memory growth
+- Tab switch no longer leaves notes hanging (all keys released on tab change)
+- BookwormReader sentence splitting is now O(n) instead of O(n²)
+
 ## [1.7.0] - 2026-11-27
 ### Added
 - 📖 Bookworm tab: load .txt, .rtf, or .pdf files and read them aloud via the trackpad haptic motor
