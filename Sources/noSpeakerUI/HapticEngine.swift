@@ -4,6 +4,9 @@ import QuartzCore
 
 private typealias DeviceList = @convention(c) () -> Unmanaged<CFArray>?
 private typealias DeviceID = @convention(c) (UnsafeMutableRawPointer, UnsafeMutablePointer<UInt64>) -> Int32
+private typealias IsBuiltIn = @convention(c) (UnsafeMutableRawPointer) -> Bool
+private typealias DeviceStart = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
+private typealias DeviceStop = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
 private typealias ActuatorCreate = @convention(c) (UInt64) -> Unmanaged<CFTypeRef>?
 private typealias ActuatorOpen = @convention(c) (CFTypeRef) -> Int32
 private typealias ActuationCreate = @convention(c) (CFDictionary, Int32) -> UnsafeMutableRawPointer?
@@ -41,6 +44,7 @@ final class HapticEngine {
     private var renderTimer: DispatchSourceTimer?
     private let library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
     private var cachedActuator: CFTypeRef?
+    private var cachedDevicePtr: UnsafeMutableRawPointer?
 
     private var currentFrequencyMode: FrequencyMode {
         configurationLock.lock(); defer { configurationLock.unlock() }; return _frequencyMode
@@ -58,19 +62,37 @@ final class HapticEngine {
         if let cachedActuator { return cachedActuator }
         guard let listFn = getSymbol("MTDeviceCreateList", as: DeviceList.self),
               let idFn = getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
+              let builtInFn = getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self),
+              let startFn = getSymbol("MTDeviceStart", as: DeviceStart.self),
               let createFn = getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
               let openFn = getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
               let list = listFn()?.takeRetainedValue() else { return nil }
         for index in 0..<CFArrayGetCount(list) {
             guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
+            let ptr = UnsafeMutableRawPointer(mutating: raw)
+            guard builtInFn(ptr) else { continue }
+            _ = startFn(ptr, 0)
             var id: UInt64 = 0
-            if idFn(UnsafeMutableRawPointer(mutating: raw), &id) == 0,
-               let candidate = createFn(id)?.takeRetainedValue(), openFn(candidate) == 0 {
-                cachedActuator = candidate
-                return candidate
-            }
+            guard idFn(ptr, &id) == 0,
+                  let candidate = createFn(id)?.takeRetainedValue(),
+                  openFn(candidate) == 0 else { continue }
+            cachedDevicePtr = ptr
+            cachedActuator = candidate
+            return candidate
         }
         return nil
+    }
+
+    func close() {
+        queue.sync {
+            stopRenderer()
+            if let ptr = cachedDevicePtr,
+               let stopFn = getSymbol("MTDeviceStop", as: DeviceStop.self) {
+                _ = stopFn(ptr, 0)
+            }
+            cachedActuator = nil
+            cachedDevicePtr = nil
+        }
     }
 
     private func midiNoteToHz(_ note: Int) -> Double { 440 * pow(2, Double(note - 69) / 12) }
@@ -109,11 +131,10 @@ final class HapticEngine {
     }
 
     func playWelcomeMelody() {
-        var notes = [60, 64, 67, 72, 71, 67, 64, 60]
-        if frequencyMode == .extended { notes.append(contentsOf: [84, 96, 108]) }
+        let notes = [60, 64, 67, 72, 71, 67, 64, 60]
         for (index, note) in notes.enumerated() {
-            queue.asyncAfter(deadline: .now() + Double(index) * 0.14) { [weak self] in
-                self?.startNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.85)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 + Double(index) * 0.14) { [weak self] in
+                self?.startNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.9)
             }
         }
     }

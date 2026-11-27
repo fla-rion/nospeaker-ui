@@ -22,7 +22,7 @@ struct BuiltInPiece: Identifiable {
     private var soundingNotes = Set<Int>()
     func choose(_ piece: BuiltInPiece) {
         guard let url = Bundle.main.url(forResource: piece.filename, withExtension: nil, subdirectory: "midi") else { onLog?("Built-in MIDI resource missing: midi/\(piece.filename)"); return }
-        onLog?("Built-in MIDI URL: \(url.path)")
+        onLog?("Selected built-in MIDI \(piece.name) at \(url.path)")
         selectedURL = url; currentTrackName = piece.name; stop()
     }
     func openFile() {
@@ -35,15 +35,17 @@ struct BuiltInPiece: Identifiable {
     func play() {
         guard !isPlaying else { return }
         guard let selectedURL else { onLog?("No MIDI file selected"); return }
+        onLog?("Loading MIDI file: \(selectedURL.path)")
         let data: Data
         do { data = try Data(contentsOf: selectedURL) }
         catch { onLog?("Could not read MIDI file at \(selectedURL.path): \(error.localizedDescription)"); return }
         if index == 0 || progress >= 1 {
-            guard let parsed = Self.parse(data) else { onLog?("Could not parse MIDI file (invalid header, track, or event data): \(selectedURL.lastPathComponent)"); return }
+            guard let parsed = Self.parse(data) else { onLog?("Could not parse MIDI file (invalid header, track, or event data) at \(selectedURL.path)"); return }
             events = parsed.events; duration = parsed.duration
-            onLog?("Parsed \(events.count) note events, duration \(String(format: "%.2f", duration))s from \(selectedURL.lastPathComponent)")
+            onLog?("Parsed \(events.count) note events, duration \(String(format: "%.2f", duration))s from \(selectedURL.path)")
         }
-        guard !events.isEmpty else { onLog?("MIDI file contains no note events: \(selectedURL.lastPathComponent)"); return }
+        guard !events.isEmpty else { onLog?("MIDI file contains no note events at \(selectedURL.path)"); return }
+        onLog?("Playing MIDI file: \(selectedURL.path)")
         isPlaying = true
         timer = Task { [weak self] in
             guard let self else { return }
