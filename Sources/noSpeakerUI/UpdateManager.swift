@@ -15,6 +15,8 @@ final class UpdateManager: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var upToDate: Bool = false
     @Published var showUpToDateAlert: Bool = false
+    @Published var allReleases: [ReleaseInfo] = []
+    @Published var selectedRelease: ReleaseInfo? = nil
 
     struct ReleaseInfo {
         let tag: String
@@ -38,20 +40,22 @@ final class UpdateManager: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
             let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-            guard let release = releases.first(where: { !$0.draft && !$0.prerelease }),
-                  let asset = release.assets.first(where: { $0.name.lowercased().hasSuffix(".dmg") }),
-                  let url = URL(string: asset.browserDownloadURL) else { latestRelease = nil; return }
-            let newer = Self.isVersion(release.tagName, newerThan: Self.currentVersion)
             let formatter = ISO8601DateFormatter()
-            let date = release.publishedAt.flatMap { formatter.date(from: $0) }.map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none) } ?? ""
-            let info = ReleaseInfo(tag: release.tagName, name: release.name.isEmpty ? "noSpeakerUI \(release.tagName)" : release.name, body: release.body, dmgURL: url, dmgSize: asset.size, date: date, isNewer: newer)
-            if newer {
-                latestRelease = info
-                upToDate = false
-            } else {
-                latestRelease = nil
-                upToDate = true
-                showUpToDateAlert = true
+            let parsed: [ReleaseInfo] = releases.compactMap { r in
+                guard !r.draft,
+                      let asset = r.assets.first(where: { $0.name.lowercased().hasSuffix(".dmg") }),
+                      let url = URL(string: asset.browserDownloadURL) else { return nil }
+                let date = r.publishedAt.flatMap { formatter.date(from: $0) }
+                    .map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none) } ?? ""
+                let newer = Self.isVersion(r.tagName, newerThan: Self.currentVersion)
+                return ReleaseInfo(tag: r.tagName, name: r.name.isEmpty ? "noSpeakerUI \(r.tagName)" : r.name,
+                    body: r.body, dmgURL: url, dmgSize: asset.size, date: date, isNewer: newer)
+            }
+            allReleases = parsed
+            if selectedRelease == nil { selectedRelease = parsed.first }
+            if let latest = parsed.first {
+                latestRelease = latest
+                if latest.isNewer { upToDate = false } else { upToDate = true; showUpToDateAlert = true }
             }
         } catch {
             errorMessage = "Update check failed: \(error.localizedDescription)"
@@ -59,8 +63,9 @@ final class UpdateManager: ObservableObject {
         }
     }
 
+
     func downloadUpdate() async {
-        guard let release = latestRelease else { return }
+        guard let release = selectedRelease ?? latestRelease else { return }
         isDownloading = true; downloadProgress = 0; errorMessage = nil
         defer { isDownloading = false }
         do {
