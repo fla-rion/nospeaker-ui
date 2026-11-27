@@ -32,8 +32,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key><string>com.a90.nospeakerui</string>
     <key>CFBundleName</key><string>noSpeakerUI</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.9.9</string>
-    <key>CFBundleVersion</key><string>199</string>
+    <key>CFBundleShortVersionString</key><string>2.0.0</string>
+    <key>CFBundleVersion</key><string>200</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -42,8 +42,8 @@ PLIST
 codesign --force --deep --sign - --entitlements noSpeakerUI.entitlements "$app"
 echo "Built universal app at $app"
 
-dmg_stage="/tmp/dmg_stage199"
-dmg="noSpeakerUI-1.9.9.dmg"
+dmg_stage="/tmp/dmg_stage200"
+dmg="noSpeakerUI-2.0.0.dmg"
 rm -rf "$dmg_stage" "$dmg"
 mkdir -p "$dmg_stage"
 cp -R "$app" "$dmg_stage/"
@@ -56,5 +56,5 @@ echo "Certificate installed successfully!"
 read -p "Press Enter to close..."
 INSTALLER
 chmod +x "$dmg_stage/Zertifikat installieren.command"
-hdiutil create -volname "noSpeakerUI 1.9.9" -srcfolder "$dmg_stage" -ov -format UDZO "$dmg"
+hdiutil create -volname "noSpeakerUI 2.0.0" -srcfolder "$dmg_stage" -ov -format UDZO "$dmg"
 echo "Built $dmg"

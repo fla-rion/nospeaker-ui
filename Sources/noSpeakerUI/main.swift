@@ -534,11 +534,30 @@ struct ContentView: View {
                     .disabled(midiPlayer.selectedURL == nil)
                 Button(action: midiPlayer.stop) { Label("Stop", systemImage: "stop.fill") }
                 Spacer()
-                Picker("Instrument", selection: $midiPlayer.currentInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 170)
+                Picker("Default Instrument", selection: $midiPlayer.currentInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 190)
+            }
+            // Multi-track: per-channel preset mapping
+            if !midiPlayer.detectedChannels.isEmpty {
+                GroupBox("Erkannte Kanäle (\(midiPlayer.detectedChannels.count))") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(midiPlayer.detectedChannels, id: \.self) { ch in
+                            HStack {
+                                Text("Ch \(ch + 1)\(ch == 9 ? " (Drums)" : "")").frame(width: 90, alignment: .leading)
+                                Picker("", selection: Binding(
+                                    get: { midiPlayer.channelPresets[ch] ?? midiPlayer.currentInstrument },
+                                    set: { midiPlayer.channelPresets[ch] = $0 }
+                                )) {
+                                    ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) }
+                                }.labelsHidden().frame(maxWidth: 160)
+                            }
+                        }
+                        Text("Auto-mapping aus GM Program Change. Manuell anpassbar.").font(.caption).foregroundColor(.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             HStack { Text("Tempo"); Slider(value: $midiPlayer.tempo, in: 0.5...2); Text("\(Int(midiPlayer.tempo * 100))%") }
             HStack { Text("Transpose"); Button("−") { midiPlayer.transpose = max(-12, midiPlayer.transpose - 1) }; Text("\(midiPlayer.transpose) st").frame(width: 45); Button("+") { midiPlayer.transpose = min(12, midiPlayer.transpose + 1) }; Spacer(); Toggle("Loop", isOn: $midiPlayer.loop); Toggle("Legato", isOn: $midiPlayer.legato) }
-            Picker("Polyphony Limit", selection: $midiPlayer.polyphonyLimit) { ForEach(1...4, id: \.self) { Text("\($0) voices").tag($0) } }
+            Picker("Polyphony Limit", selection: $midiPlayer.polyphonyLimit) { ForEach(1...8, id: \.self) { Text("\($0) voices").tag($0) } }
             HStack { Text("Portamento Time"); Slider(value: $midiPlayer.portamentoMilliseconds, in: 0...200); Text("\(Int(midiPlayer.portamentoMilliseconds)) ms") }
             HStack { Text("Strength"); Slider(value: $midiPlayer.volume, in: 0...1); Text("\(Int(midiPlayer.volume * 100))%") }
             Text("Tip: Convert sheet music to MIDI at musescore.com").font(.caption).foregroundColor(.secondary)

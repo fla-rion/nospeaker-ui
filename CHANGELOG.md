@@ -3,6 +3,16 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.0] - 2026-11-28
+### Added
+- Multi-track MIDI playback: MIDI channels are now parsed individually with per-channel instrument presets
+- Auto-mapping of General MIDI Program Change events to haptic presets (Piano/Organ/Guitar/Violin/Flute/Trumpet/Bass/Xylophone/Theremin)
+- Channel 9 (drums) auto-maps to Xylophone for short percussive hits
+- Voice keys: channel*128+note — same note on different channels no longer conflicts
+- MIDI tab: "Erkannte Kanäle" section shows detected channels with editable preset per channel
+- Polyphony limit raised to 8 (was 4)
+- HapticEngine: new startVoice(key:midiNote:) and stopVoice(key:) API for arbitrary voice keys
+
 ## [1.9.9] - 2026-11-28
 ### Fixed
 - **Main bug**: Added missing "BaseWaveform" key to MTActuationCreateFromDictionary call — on macOS 27, without this key the function returns nil silently, causing zero haptic output from Keyboard and MIDI Player

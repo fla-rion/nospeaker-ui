@@ -145,8 +145,14 @@ final class HapticEngine {
     private func clampHz(_ hz: Double) -> Double { min(currentFrequencyMode == .standard ? 3951 : 8000, max(98, hz)) }
 
     func startNote(midiNote: Int, preset: InstrumentPreset, durationSeconds: Double, strength: Double = 0.8) {
+        startVoice(key: midiNote, midiNote: midiNote, preset: preset, durationSeconds: durationSeconds, strength: strength)
+    }
+
+    /// Start a haptic voice using an arbitrary key (e.g. channel*128+note for multi-track MIDI).
+    /// `midiNote` determines pitch; `key` is the unique slot in the voice map.
+    func startVoice(key: Int, midiNote: Int, preset: InstrumentPreset, durationSeconds: Double, strength: Double = 0.8) {
         let voice = VoiceState(preset: preset, strength: strength, startTime: CACurrentMediaTime(), duration: durationSeconds, frequency: clampHz(midiNoteToHz(midiNote)))
-        queue.async { [weak self] in self?.voices[midiNote] = voice; self?.ensureRenderer() }
+        queue.async { [weak self] in self?.voices[key] = voice; self?.ensureRenderer() }
     }
 
     func startNoteSustained(midiNote: Int, preset: InstrumentPreset, strength: Double = 0.8) {
@@ -154,9 +160,14 @@ final class HapticEngine {
     }
 
     func stopNote(midiNote: Int) {
+        stopVoice(key: midiNote)
+    }
+
+    /// Stop a voice by its arbitrary key (matches startVoice(key:)).
+    func stopVoice(key: Int) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.voices.removeValue(forKey: midiNote)
+            self.voices.removeValue(forKey: key)
             if self.voices.isEmpty { self.stopRenderer() }
         }
     }
