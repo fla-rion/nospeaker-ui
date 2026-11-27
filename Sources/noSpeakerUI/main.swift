@@ -55,7 +55,7 @@ final class SpeakerController: ObservableObject {
         process.terminate(); activeKeys.removeAll(); lastThereminFrequency = nil
         append("\nStopping nospeaker…\n")
     }
-    func playWelcomeMelody() async { await haptics.playWelcomeMelody() }
+    func playWelcomeMelody() { haptics.playWelcomeMelody() }
 
     func playNote(_ midiNote: Int) {
         flashingNotes.insert(midiNote)
@@ -63,10 +63,9 @@ final class SpeakerController: ObservableObject {
         let previous = activeKeys.first
         activeKeys.insert(midiNote)
         if legato, let previous, previous != midiNote {
-            Task { await haptics.glideToNote(from: previous, to: midiNote, preset: keyboardInstrument, portamentoMilliseconds: portamentoMilliseconds, sustainUntilStopped: true) }
-            return
+            haptics.stopNote(midiNote: previous)
         }
-        Task { await haptics.playNote(midiNote: midiNote, preset: keyboardInstrument, durationSeconds: 0.35, sustainUntilStopped: true) }
+        haptics.startNoteSustained(midiNote: midiNote, preset: keyboardInstrument)
     }
     func releaseNote(_ midiNote: Int) {
         activeKeys.remove(midiNote); haptics.stopNote(midiNote: midiNote)
@@ -75,7 +74,7 @@ final class SpeakerController: ObservableObject {
         let frequency = 100 + min(1, max(0, position)) * 3900
         if let lastThereminFrequency, abs(frequency - lastThereminFrequency) <= 10 { return }
         lastThereminFrequency = frequency
-        Task { await haptics.playTone(frequency: frequency, durationSeconds: 0.25, preset: .theremin) }
+        haptics.playTone(frequency: frequency, durationSeconds: 0.3, preset: .theremin)
     }
     func endTheremin() { lastThereminFrequency = nil; haptics.stopAllTones() }
     func logMIDI(_ message: String) { append("MIDI: \(message)\n") }
@@ -251,7 +250,7 @@ struct ContentView: View {
             installKeyboardMonitor()
             Task {
                 try? await Task.sleep(nanoseconds: 300_000_000)
-                await controller.playWelcomeMelody()
+                controller.playWelcomeMelody()
                 await updateManager.checkForUpdates()
                 if updateManager.latestRelease?.isNewer == true { activeSheet = .update }
             }
