@@ -3,6 +3,11 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.9.8] - 2026-11-28
+### Fixed
+- **M1 MacBook Air fix**: MTDeviceStart restored in openDevicesSynchronously() — required on Apple Silicon before creating the actuator (removed in v1.9.5 by mistake)
+- **macOS 27 fix**: MTDeviceIsBuiltIn removed from required guard chain in discoverDevices() — symbol may be absent on newer macOS versions, causing silent device discovery failure
+
 ## [1.9.0] - 2026-11-27
 ### Added
 - DAW Integration: virtual Core MIDI destination "noSpeakerUI Haptic Synth" — route notes directly from Logic Pro, Ableton Live, GarageBand, or any Core MIDI application

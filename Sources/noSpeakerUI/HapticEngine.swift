@@ -82,11 +82,12 @@ final class HapticEngine {
             guard let self,
                   let listFn = self.getSymbol("MTDeviceCreateList", as: DeviceList.self),
                   let idFn = self.getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
-                  let builtInFn = self.getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self),
                   let startFn = self.getSymbol("MTDeviceStart", as: DeviceStart.self),
                   let createFn = self.getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
                   let openFn = self.getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
                   let list = listFn()?.takeRetainedValue() else { return }
+            // MTDeviceIsBuiltIn is optional — absent on some macOS versions; default to built-in if unavailable
+            let builtInFn = self.getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self)
             self.devices.forEach { device in
                 if let stopFn = self.getSymbol("MTDeviceStop", as: DeviceStop.self) { _ = stopFn(device.devicePtr, 0) }
             }
@@ -99,7 +100,7 @@ final class HapticEngine {
                 var id: UInt64 = 0
                 guard idFn(ptr, &id) == 0,
                       let actuator = createFn(id)?.takeRetainedValue(), openFn(actuator) == 0 else { continue }
-                let isBuiltIn = builtInFn(ptr)
+                let isBuiltIn = builtInFn?(ptr) ?? true
                 self.devices.append(TrackpadDevice(id: id, isBuiltIn: isBuiltIn, actuator: actuator, devicePtr: ptr))
             }
             let found = self.devices.map { (id: $0.id, name: $0.isBuiltIn ? "Built-in Trackpad" : "Magic Trackpad", isBuiltIn: $0.isBuiltIn) }
@@ -116,8 +117,8 @@ final class HapticEngine {
         }
     }
 
-    // Synchronous device open — v1.3 approach: no IsBuiltIn filter, no MTDeviceStart
-    // Just open the first device that responds — works on all Mac models
+    // Synchronous device open — called as fallback from renderFrame() if discoverDevices() hasn't finished.
+    // Must call MTDeviceStart before MTActuatorCreateFromDeviceID — required on M1 (Apple Silicon).
     private func openDevicesSynchronously() {
         guard let listFn = getSymbol("MTDeviceCreateList", as: DeviceList.self),
               let idFn = getSymbol("MTDeviceGetDeviceID", as: DeviceID.self),
@@ -126,9 +127,11 @@ final class HapticEngine {
               let list = listFn()?.takeRetainedValue() else { return }
         cachedDeviceList = list
         let builtInFn = getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self)
+        let startFn = getSymbol("MTDeviceStart", as: DeviceStart.self)
         for index in 0..<CFArrayGetCount(list) {
             guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
             let ptr = UnsafeMutableRawPointer(mutating: raw)
+            _ = startFn?(ptr, 0)  // required on Apple Silicon before creating the actuator
             var id: UInt64 = 0
             guard idFn(ptr, &id) == 0,
                   let actuator = createFn(id)?.takeRetainedValue(),
