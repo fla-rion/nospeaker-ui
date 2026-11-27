@@ -35,7 +35,7 @@ final class VirtualMIDIPort: ObservableObject {
         isActive = false
     }
 
-    private func handlePacketList(_ packetList: UnsafePointer<MIDIPacketList>) {
+    nonisolated private func handlePacketList(_ packetList: UnsafePointer<MIDIPacketList>) {
         var packet = packetList.pointee.packet
         for _ in 0..<packetList.pointee.numPackets {
             let bytes = withUnsafeBytes(of: packet.data) { Array($0.prefix(Int(packet.length))) }
@@ -44,7 +44,7 @@ final class VirtualMIDIPort: ObservableObject {
         }
     }
 
-    private func parsePacket(_ bytes: [UInt8]) {
+    nonisolated private func parsePacket(_ bytes: [UInt8]) {
         var i = 0
         while i < bytes.count {
             let status = bytes[i]
@@ -91,7 +91,7 @@ final class VirtualMIDIPort: ObservableObject {
         }
     }
 
-    private static func noteName(_ note: Int) -> String {
+    nonisolated private static func noteName(_ note: Int) -> String {
         ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][note % 12] + String(note / 12 - 1)
     }
 
