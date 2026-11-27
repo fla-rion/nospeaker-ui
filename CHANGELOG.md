@@ -3,6 +3,12 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.9.9] - 2026-11-28
+### Fixed
+- **Main bug**: Added missing "BaseWaveform" key to MTActuationCreateFromDictionary call — on macOS 27, without this key the function returns nil silently, causing zero haptic output from Keyboard and MIDI Player
+- Fixed DeviceStop type signature: was (ptr, Int32)->Int32 but actual function is (ptr)->Void (matches original nospeaker.swift); wrong signature caused undefined behaviour on Apple Silicon
+- Both fixes identified by comparing against original os6/nospeaker source
+
 ## [1.9.8] - 2026-11-28
 ### Fixed
 - **M1 MacBook Air fix**: MTDeviceStart restored in openDevicesSynchronously() — required on Apple Silicon before creating the actuator (removed in v1.9.5 by mistake)

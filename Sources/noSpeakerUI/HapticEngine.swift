@@ -5,8 +5,8 @@ import QuartzCore
 private typealias DeviceList = @convention(c) () -> Unmanaged<CFArray>?
 private typealias DeviceID = @convention(c) (UnsafeMutableRawPointer, UnsafeMutablePointer<UInt64>) -> Int32
 private typealias IsBuiltIn = @convention(c) (UnsafeMutableRawPointer) -> Bool
-private typealias DeviceStart = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
-private typealias DeviceStop = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
+private typealias DeviceStart = @convention(c) (UnsafeMutableRawPointer, Int32) -> Void
+private typealias DeviceStop = @convention(c) (UnsafeMutableRawPointer) -> Void
 private typealias ActuatorCreate = @convention(c) (UInt64) -> Unmanaged<CFTypeRef>?
 private typealias ActuatorOpen = @convention(c) (CFTypeRef) -> Int32
 private typealias ActuationCreate = @convention(c) (CFDictionary, Int32) -> UnsafeMutableRawPointer?
@@ -89,7 +89,7 @@ final class HapticEngine {
             // MTDeviceIsBuiltIn is optional — absent on some macOS versions; default to built-in if unavailable
             let builtInFn = self.getSymbol("MTDeviceIsBuiltIn", as: IsBuiltIn.self)
             self.devices.forEach { device in
-                if let stopFn = self.getSymbol("MTDeviceStop", as: DeviceStop.self) { _ = stopFn(device.devicePtr, 0) }
+                if let stopFn = self.getSymbol("MTDeviceStop", as: DeviceStop.self) { stopFn(device.devicePtr) }
             }
             self.devices.removeAll()
             self.cachedDeviceList = list
@@ -111,7 +111,7 @@ final class HapticEngine {
     func close() {
         queue.sync {
             stopRenderer()
-            if let stopFn = getSymbol("MTDeviceStop", as: DeviceStop.self) { devices.forEach { _ = stopFn($0.devicePtr, 0) } }
+            if let stopFn = getSymbol("MTDeviceStop", as: DeviceStop.self) { devices.forEach { stopFn($0.devicePtr) } }
             devices.removeAll()
             cachedDeviceList = nil
         }
@@ -240,7 +240,12 @@ final class HapticEngine {
         guard !tones.isEmpty else { return }
         let strength = active.map { $0.value.strength }.max() ?? 0.8
         func play(_ tones: [[String: Any]], on device: TrackpadDevice) {
-            guard !tones.isEmpty, let actuation = createFn(["Tones": Array(tones.prefix(6))] as CFDictionary, 0) else { return }
+            guard !tones.isEmpty else { return }
+            let shape: [String: Any] = [
+                "BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": 12.0],
+                "Tones": Array(tones.prefix(6))
+            ]
+            guard let actuation = createFn(shape as CFDictionary, 0) else { return }
             _ = playFn(actuation, Unmanaged.passUnretained(device.actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)
             Unmanaged<AnyObject>.fromOpaque(actuation).release()
         }
