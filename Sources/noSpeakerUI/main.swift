@@ -23,7 +23,9 @@ final class SpeakerController: ObservableObject {
     @Published var midiEnabled = false { didSet { configureMIDI() } }
     @Published var midiSources: [(id: MIDIEndpointRef, name: String)] = []
     @Published var selectedMIDISource: MIDIEndpointRef = 0 { didSet { if midiEnabled { configureMIDI() } } }
+    @Published var keyboardInstrument = InstrumentPreset.piano
 
+    private let haptics = HapticEngine()
     private var process: Process?
     private var outputPipes: [Pipe] = []
     private var midiClient = MIDIClientRef()
@@ -42,37 +44,28 @@ final class SpeakerController: ObservableObject {
     func sweep() { var args = ["--sweep"]; addModes(to: &args); launch(args) }
     func demo() { var args: [String] = []; addModes(to: &args); launch(args) }
     func stop() {
+        haptics.stopAllTones()
         guard let process, process.isRunning else { return }
         process.terminate(); activeKey = nil; lastThereminFrequency = nil
         append("\nStopping nospeaker…\n")
     }
+    func playWelcomeMelody() async { await haptics.playWelcomeMelody() }
 
     func playNote(_ midiNote: Int) {
         activeKey = midiNote
-        startTone(440 * pow(2, Double(midiNote - 69) / 12))
+        Task { await haptics.playNote(midiNote: midiNote, preset: keyboardInstrument, durationSeconds: 0.35) }
     }
     func releaseNote(_ midiNote: Int) {
         guard activeKey == midiNote else { return }
-        activeKey = nil; stop()
+        activeKey = nil; haptics.stopAllTones()
     }
     func theremin(_ position: Double) {
         let frequency = 100 + min(1, max(0, position)) * 3900
         if let lastThereminFrequency, abs(frequency - lastThereminFrequency) <= 10 { return }
         lastThereminFrequency = frequency
-        startTone(frequency)
+        Task { await haptics.playTone(frequency: frequency, durationSeconds: 0.25, preset: .theremin) }
     }
-    func endTheremin() { lastThereminFrequency = nil; stop() }
-
-    private func startTone(_ frequency: Double) {
-        // A held note replaces the previous tone process; each CLI tone runs until terminated.
-        terminateCurrent()
-        var args = ["--tone", String(format: "%.2f", frequency)]
-        addModes(to: &args); launch(args)
-    }
-    private func terminateCurrent() {
-        guard let process, process.isRunning else { return }
-        process.terminate()
-    }
+    func endTheremin() { lastThereminFrequency = nil; haptics.stopAllTones() }
 
     private func addModes(to arguments: inout [String]) {
         if darkMode { arguments.append("--dark") }
@@ -182,9 +175,9 @@ private struct PianoKey: Identifiable {
 
 struct ContentView: View {
     @StateObject private var controller = SpeakerController()
-    @StateObject private var updateChecker = UpdateChecker()
+    @StateObject private var updateManager = UpdateManager()
     @StateObject private var midiPlayer = MIDIPlayer()
-    @State private var showingUpdateAlert = false
+    @State private var showingUpdateSheet = false
     @State private var selectedTab = 0
     @State private var heldKeys = Set<Int>()
     @State private var mouseHeldKeys = Set<Int>()
@@ -234,11 +227,18 @@ struct ContentView: View {
             }.frame(minHeight: 125)
         }
         .padding(20)
-        .onAppear { installKeyboardMonitor(); Task { await updateChecker.checkForUpdates(); showingUpdateAlert = updateChecker.availableVersion != nil } }
-        .onDisappear { removeKeyboardMonitor(); if controller.midiEnabled { controller.midiEnabled = false }; controller.stop() }
-        .alert("Update available: v\(updateChecker.availableVersion ?? "")", isPresented: $showingUpdateAlert) {
-            Button("Open Releases") { updateChecker.openReleasesPage() }; Button("Later", role: .cancel) {}
+        .toolbar { ToolbarItem(placement: .primaryAction) { Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); showingUpdateSheet = updateManager.latestRelease?.isNewer == true } } } }
+        .onAppear {
+            installKeyboardMonitor()
+            Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                await controller.playWelcomeMelody()
+                await updateManager.checkForUpdates()
+                showingUpdateSheet = updateManager.latestRelease?.isNewer == true
+            }
         }
+        .onDisappear { removeKeyboardMonitor(); if controller.midiEnabled { controller.midiEnabled = false }; controller.stop() }
+        .sheet(isPresented: $showingUpdateSheet) { UpdateSheet(manager: updateManager) }
     }
 
     private var controls: some View {
@@ -261,6 +261,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Keyboard synthesizer").font(.headline)
             Text("Click a key or use A W S E D F T G Y H U J K. Hold to play; release to stop.").foregroundColor(.secondary)
+            Picker("Instrument", selection: $controller.keyboardInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 200)
             piano
             Spacer()
         }.padding(.top, 12)

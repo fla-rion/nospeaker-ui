@@ -57,9 +57,8 @@ struct BuiltInPiece: Identifiable {
                 if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
                 if Task.isCancelled { break }
                 elapsed += wait
-                let hz = 440 * pow(2, Double(event.note - 69) / 12)
                 let hold = max(0.04, event.length / self.tempo * self.currentInstrument.noteDurationMultiplier)
-                await self.haptics.playTone(frequency: hz, durationSeconds: hold, strength: self.volume * self.currentInstrument.strength)
+                await self.haptics.playNote(midiNote: event.note, preset: self.currentInstrument, durationSeconds: hold, strength: self.volume * self.currentInstrument.strength)
                 self.index += 1; self.progress = min(1, event.time / max(0.01, self.duration))
             }
             self.isPlaying = false; self.progress = 1; self.index = 0

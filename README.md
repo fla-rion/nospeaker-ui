@@ -1,167 +1,61 @@
-```text
-────────────────────────  a90.com presents  ─────────────────────────
+# noSpeakerUI
 
-    _   __ ____      _____  ____   ______ ___     __ __  ______ ____
-   / | / // __ \    / ___/ / __ \ / ____//   |   / //_/ / ____// __ \
-  /  |/ // / / /    \__ \ / /_/ // __/  / /| |  / ,<   / __/  / /_/ /
- / /|  // /_/ /    ___/ // ____// /___ / ___ | / /| | / /___ / _, _/
-/_/ |_/ \____/    /____//_/    /_____//_/  |_|/_/ |_|/_____//_/ |_|
+A SwiftUI wrapper for the [noSpeaker](https://github.com/os6/nospeaker) haptic synthesizer — turn your MacBook Force Touch trackpad into a musical instrument.
 
-─  haptic voice synthesis  ─────────────────────────────  trackpad  ─
-```
+## Features
 
-**Mute your Mac. Your trackpad will still talk.**
+- **Text-to-Speech**: Type any text and hear it through the trackpad.
+- **Keyboard Synthesizer**: Play notes with your computer keyboard or on-screen piano (C3–C5).
+- **MIDI File Player**: Load any `.mid` file or choose from 10 built-in classical pieces.
+- **Core MIDI Input**: Connect any Core MIDI-compatible device.
+- **Theremin Mode**: Slide a control to glide between 100 Hz and 4,000 Hz.
+- **10 Instrument Presets**: Piano, Organ, Guitar, Violin, Flute, Trumpet, Bass, Xylophone, Harpsichord, Theremin.
+- **Welcome Melody**: A short arpeggio plays on every launch.
+- **Auto-Updater**: Checks GitHub releases and downloads updates with a progress bar.
 
-There's no speaker in a MacBook trackpad, just a small haptic motor that taps the glass so you feel a click.
-NO SPEAKER drives that motor up to 4,000 times a second, fast enough to make sound you can hear, and turns it
-into a voice. It talks, sings, raps, and becomes an instrument under your finger.
+## Built-in Pieces (Public Domain, Mutopia Project)
 
-One command. About a minute and a half. No speakers used.
+| # | Piece | Composer | Difficulty |
+|---|-------|----------|------------|
+| 1 | Für Elise | Beethoven | Medium |
+| 2 | Mondscheinsonate | Beethoven | Advanced |
+| 3 | Kanon in D | Pachelbel | Easy |
+| 4 | Türkischer Marsch | Mozart | Medium |
+| 5 | The Entertainer | Joplin | Medium |
+| 6 | Gymnopédie Nr. 1 | Satie | Easy |
+| 7 | Swan Lake Theme | Tchaikovsky | Easy |
+| 8 | Ode an die Freude | Beethoven | Easy |
+| 9 | Eine Kleine Nachtmusik | Mozart | Medium |
+| 10 | Vivaldi: Frühling | Vivaldi | Advanced |
 
-[Watch the demo on X](https://x.com/codycollier/status/2124505859883716918), with the sound on.
+## Requirements
 
-## 01 / before you start
+- macOS 12 or later
+- Force Touch trackpad (built-in MacBook 2015+ or Magic Trackpad 2+)
+- For MIDI input: any Core MIDI-compatible device
 
-```text
-[ mute your mac ]        it still talks; that's the point
-[ put it on a table ]    on your lap it's much quieter
-[ hands off the glass ]  until it asks you to touch it
-```
+## Installation
 
-**Space** skips a part. **q** or **Ctrl-C** goes to the end.
+1. Download `noSpeakerUI-vX.X.dmg` from [Releases](https://github.com/fla-rion/nospeaker-ui/releases).
+2. Open the DMG and drag noSpeakerUI to Applications.
+3. Launch and enjoy — place the MacBook on a table for best sound.
 
-## 02 / run it
+## Building from Source
 
-`[ one line ]`
-
-```sh
-curl -fsSL a90.com/nospeaker | sh
-```
-
-Downloads the latest release to `~/.local/bin/nospeaker` and starts the show. `a90.com/nospeaker` points
-to [play.sh](play.sh) in this repo, so you can read what it runs first.
-
-`[ download ]`
-
-Grab `nospeaker.zip` from the [latest release](https://github.com/os6/nospeaker/releases/latest),
-unzip it and run `./nospeaker` in Terminal. Signed with a Developer ID and notarized by Apple.
-
-`[ from source ]`
-
-Needs Xcode or the Command Line Tools (`xcode-select --install`). Builds one program for Apple Silicon
-and Intel Macs. Built with only the Command Line Tools, the Intel part needs macOS 13 or later.
-
-```sh
-git clone https://github.com/os6/nospeaker
-cd nospeaker
-./build.sh
-./nospeaker
-```
-
-## 03 / play with it
-
-```text
-./nospeaker "hello there"            say anything
-./nospeaker --voice Daniel "hello"   in another macOS voice
-./nospeaker --sweep                  a rising tone, 100 Hz to 4 kHz
-
---dark                               white on black
---plain                              no visuals, plain text
---external                           play through an external Magic Trackpad
-```
-
-## noSpeakerUI
-
-This repository also includes a SwiftUI macOS app for entering text, choosing an installed system voice,
-running the sweep or built-in demo, and viewing process output. Build a universal `.app` bundle with:
-
-```sh
+```bash
+git clone https://github.com/fla-rion/nospeaker-ui
+cd nospeaker-ui
 ./build-app.sh
 open build/noSpeakerUI.app
 ```
 
-The app needs macOS 12 or later and a Force Touch trackpad, just like the command-line tool. It bundles the
-universal `nospeaker` binary in its app resources.
+Requires Xcode Command Line Tools (`xcode-select --install`).
 
-## 04 / needs
+## Credits
 
-A Force Touch trackpad (built into MacBooks from 2015 on, or a Magic Trackpad 2 or newer), and macOS 12 or
-later. Without a Force Touch trackpad, it says so and exits.
+- [noSpeaker](https://github.com/os6/nospeaker) by Cody Collier (MIT License)
+- Classical MIDI files from the [Mutopia Project](https://www.mutopiaproject.org) (Public Domain)
 
-```text
-tested on
+## License
 
-MacBook Pro (Mac17,10)         M5 Max   macOS 27.2.1   everything works
-MacBook Pro (MacBookPro15,1)   Intel    macOS 15.7.4   works, built from source
-```
-
-Not tested yet: a Magic Trackpad, and versions of macOS older than 15. MultitouchSupport is private, so
-older systems may lack the functions it uses, and loudness differs between trackpads. If you try it on another
-Mac, open an issue with your model, your macOS version and how it sounded.
-
-## 05 / how it works
-
-```text
-say ──▶ formants ──▶ two tones ──▶ motor ──▶ glass
-        per 10 ms    F1 + F2       haptics   sound
-```
-
-**Why you can hear it.** The trackpad has no speaker, but the motor moves the glass. Driven back and forth
-hundreds or thousands of times a second, the glass vibrates fast enough to make sound you can hear. It's quiet
-because the motor is built for short taps, not for sound.
-
-**The motor.** `MultitouchSupport` is the private framework macOS uses for the trackpad. Its function
-`MTActuationCreateFromDictionary` takes a description of a vibration, a list of sine tones with a frequency,
-a strength and a length each, and `MTActuationActuate` plays it on the motor. Apple's public haptics API only
-offers three fixed taps.
-
-**The range.** Measured with the MacBook's own microphone, every semitone from 98 Hz to 3,951 Hz: how loud it
-is over a quiet room, and how much of the sound is the note itself.
-
-```text
-│                                      ###
-│                          #+#     +++#####        #
-│                         +#+#+   .+++#####       .#
-│              .       ++++#+#+   .+++#####    # #.# #
-│   ++        +. . #..+++++#+#++++.+++#####+ #####.###          .#
-│   +++#.     +...+#..+++++#+#++++.+++#####+ #####.####+        .#
-│  ++++#...   +...+#..+++++#+#++++.+++#####+.#####.####+        .#
-│ .++++#...++++...+#..+++++#+#++++.+++#####+.#####.####+  +#    .#
-│..++++#...++++...+#..+++++#+#++++.+++#####+.#####.####+#.+#  .#.#
-│..++++#...++++...+#..+++++#+#++++.+++#####+.#####.####+#.+#+..#.#
-└─────────────────────────────────────────────────────────────────
-      131         262         523         1047        2093    3951
-   public notes stop at 600 Hz ─┘
-
-across: every semitone, in Hz · up: loudness, +16 to +34 dB
-# clean note   + fair   . mostly buzz
-```
-
-It's loud from about 100 Hz to 4 kHz, with a few dead spots where the glass resonates. Its loudest, cleanest
-notes are around 1 kHz, which covers the most important part of a voice.
-
-**The voice.** macOS's own voice speaks the line into memory. Every 10 ms, linear prediction finds the voice's
-two strongest resonances (formants), its loudness and its pitch. The motor plays those two resonances as tones,
-restarted on every beat of the pitch, so they buzz like a voice instead of whistling. Hiss sounds (s, f, t)
-become quick bursts of high tones. Two resonances beat three: in a blind test they were clearer, and louder,
-because the motor's strength is split fewer ways.
-
-It sounds robotic, and it's much easier to follow when you can read along, which is why the show types every
-line as it speaks.
-
-**The code.** One Swift file, [nospeaker.swift](nospeaker.swift), with no dependencies.
-
-## 06 / caveats
-
-- **Is it safe?** It never drives the motor past its normal maximum strength. Going past it is possible and
-  louder, but the driver starts to stall, so nospeaker doesn't.
-- MultitouchSupport is private and undocumented, so a macOS update could break this.
-
-The MultitouchSupport function names were learned from the open-source Tactile project. Everything else was
-measured on a MacBook.
-
-```text
-──────────────────────  thanks for listening  ───────────────────────
-```
-
-Made by [Cody Collier](https://x.com/codycollier) · [a90.com](https://a90.com) · [MIT license](LICENSE)
+MIT
