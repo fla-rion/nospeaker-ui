@@ -71,14 +71,22 @@ final class UpdateManager: ObservableObject {
             let destination = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads/noSpeakerUI-\(release.tag).dmg")
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: destination, options: .atomic)
+            // Remove macOS quarantine attribute so Gatekeeper doesn't block the DMG
+            let xattr = Process()
+            xattr.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            xattr.arguments = ["-d", "com.apple.quarantine", destination.path]
+            try? xattr.run(); xattr.waitUntilExit()
             downloadedDMGPath = destination.path
             downloadProgress = 1
         } catch { errorMessage = "Download failed: \(error.localizedDescription)" }
     }
 
+    @Published var showInstallInstructions = false
+
     func openDMG() {
         guard let downloadedDMGPath else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: downloadedDMGPath))
+        showInstallInstructions = true
     }
 
     func openReleasesPage() { NSWorkspace.shared.open(releasesPageURL) }

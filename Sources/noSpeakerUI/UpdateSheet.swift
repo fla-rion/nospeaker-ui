@@ -32,5 +32,10 @@ struct UpdateSheet: View {
             }
         }
         .padding(22).frame(width: 520, height: 430)
+        .alert("DMG geöffnet — Installation", isPresented: $manager.showInstallInstructions) {
+            Button("OK") { manager.showInstallInstructions = false }
+        } message: {
+            Text("1. Im geöffneten Fenster: noSpeakerUI auf Applications ziehen\n2. Falls macOS warnt: Systemeinstellungen → Datenschutz & Sicherheit → 'Trotzdem öffnen'\n3. Die neue Version starten und die alte beenden")
+        }
     }
 }
