@@ -12,69 +12,82 @@ private typealias ActuationPlay = @convention(c) (UnsafeMutableRawPointer, Unsaf
 final class HapticEngine {
     private let library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
     private var actuator: CFTypeRef?
-    private var playingTask: Task<Void, Never>?
     private var process: Process?
-    private var endTask: Task<Void, Never>?
+    private struct Voice { let preset: InstrumentPreset; let strength: Double; let started: Date; let duration: Double; var frequency: Double }
+    private var activeNotes: [Int: Task<Void, Never>] = [:]
+    private var voices: [Int: Voice] = [:]
+    private var renderTask: Task<Void, Never>?
 
     private func symbol<T>(_ name: String, as type: T.Type) -> T? {
         guard let library, let pointer = dlsym(library, name) else { return nil }
         return unsafeBitCast(pointer, to: type)
     }
-
     private func openActuator() -> CFTypeRef? {
         if let actuator { return actuator }
-        guard let listFn = symbol("MTDeviceCreateList", as: DeviceList.self),
-              let idFn = symbol("MTDeviceGetDeviceID", as: DeviceID.self),
-              let createFn = symbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
-              let openFn = symbol("MTActuatorOpen", as: ActuatorOpen.self),
-              let list = listFn()?.takeRetainedValue() else { return nil }
+        guard let listFn = symbol("MTDeviceCreateList", as: DeviceList.self), let idFn = symbol("MTDeviceGetDeviceID", as: DeviceID.self), let createFn = symbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self), let openFn = symbol("MTActuatorOpen", as: ActuatorOpen.self), let list = listFn()?.takeRetainedValue() else { return nil }
         for index in 0..<CFArrayGetCount(list) {
             guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
             var id: UInt64 = 0
-            if idFn(UnsafeMutableRawPointer(mutating: raw), &id) == 0,
-               let candidate = createFn(id)?.takeRetainedValue(), openFn(candidate) == 0 {
-                actuator = candidate
-                return candidate
-            }
+            if idFn(UnsafeMutableRawPointer(mutating: raw), &id) == 0, let candidate = createFn(id)?.takeRetainedValue(), openFn(candidate) == 0 { actuator = candidate; return candidate }
         }
         return nil
     }
-
     func playWelcomeMelody() async {
-        for note in [60, 64, 67, 72, 71, 67, 64, 60] {
-            await playNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.85)
-            try? await Task.sleep(nanoseconds: 20_000_000)
-        }
+        for note in [60, 64, 67, 72, 71, 67, 64, 60] { await playNote(midiNote: note, preset: .piano, durationSeconds: 0.12, strength: 0.85); try? await Task.sleep(nanoseconds: 120_000_000) }
     }
-
     func playNote(midiNote: Int, preset: InstrumentPreset, durationSeconds: Double, strength: Double = 0.8) async {
-        let hz = 440 * pow(2, Double(midiNote - 69) / 12)
-        await playTone(frequency: hz, durationSeconds: durationSeconds, strength: strength, preset: preset)
+        let task = Task { do { try await Task.sleep(nanoseconds: UInt64(max(0.03, durationSeconds) * 1_000_000_000)) } catch {} }
+        activeNotes[midiNote]?.cancel()
+        activeNotes[midiNote] = task
+        voices[midiNote] = Voice(preset: preset, strength: strength, started: Date(), duration: max(0.03, durationSeconds), frequency: 440 * pow(2, Double(midiNote - 69) / 12))
+        startRenderer()
     }
-
-    func playTone(frequency: Double, durationSeconds: Double, strength: Double = 0.8, preset: InstrumentPreset = .flute) async {
-        stopAllTones()
-        guard let actuator = openActuator(),
-              let createFn = symbol("MTActuationCreateFromDictionary", as: ActuationCreate.self),
-              let playFn = symbol("MTActuationActuate", as: ActuationPlay.self) else { return }
-        let tones = preset.partials.map { partial in
-            ["Type": "Sine", "Amplitude": partial.amplitude, "DurationMS": max(30, durationSeconds * 1000), "DelayMS": 0.0, "FrequencykHz": frequency * partial.multiplier / 1000] as [String: Any]
+    func stopNote(midiNote: Int) { activeNotes.removeValue(forKey: midiNote)?.cancel(); voices.removeValue(forKey: midiNote); if activeNotes.isEmpty { renderTask?.cancel(); renderTask = nil } }
+    func stopAllNotes() { activeNotes.values.forEach { $0.cancel() }; activeNotes.removeAll(); voices.removeAll(); renderTask?.cancel(); renderTask = nil }
+    func glideToNote(from: Int, to: Int, preset: InstrumentPreset, portamentoMilliseconds: Double = 40) async {
+        let fromHz = 440 * pow(2, Double(from - 69) / 12), toHz = 440 * pow(2, Double(to - 69) / 12)
+        activeNotes[from]?.cancel(); activeNotes.removeValue(forKey: from); voices.removeValue(forKey: from)
+        await playNote(midiNote: to, preset: preset, durationSeconds: 0.5)
+        let steps = 4, interval = max(0.01, portamentoMilliseconds / 1000 / Double(steps))
+        for step in 1...steps {
+            if var voice = voices[to] { voice.frequency = fromHz + (toHz - fromHz) * Double(step) / Double(steps); voices[to] = voice }
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
-        let shape: [String: Any] = ["BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": max(30, durationSeconds * 1000)], "Tones": tones]
+    }
+    func playTone(frequency: Double, durationSeconds: Double, strength: Double = 0.8, preset: InstrumentPreset = .flute) async {
+        stopAllNotes()
+        let task = Task { do { try await Task.sleep(nanoseconds: UInt64(max(0.03, durationSeconds) * 1_000_000_000)) } catch {} }
+        activeNotes[-1] = task
+        voices[-1] = Voice(preset: preset, strength: strength, started: Date(), duration: max(0.03, durationSeconds), frequency: frequency)
+        startRenderer()
+    }
+    func stopAllTones() { stopAllNotes(); if let process, process.isRunning { process.terminate() }; process = nil }
+    private func startRenderer() {
+        guard renderTask == nil else { return }
+        renderTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                self.renderFrame()
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+    }
+    private func renderFrame() {
+        guard let actuator = openActuator(), let createFn = symbol("MTActuationCreateFromDictionary", as: ActuationCreate.self), let playFn = symbol("MTActuationActuate", as: ActuationPlay.self) else { return }
+        let now = Date()
+        for (note, task) in Array(activeNotes) where task.isCancelled || now.timeIntervalSince(voices[note]?.started ?? now) >= (voices[note]?.duration ?? 0) { activeNotes.removeValue(forKey: note)?.cancel(); voices.removeValue(forKey: note) }
+        if voices.isEmpty { renderTask?.cancel(); renderTask = nil; return }
+        let currentVoices = Array(voices.values.prefix(4))
+        let tones: [[String: Any]] = currentVoices.flatMap { voice in voice.preset.partials.map { partial in
+            let elapsed = now.timeIntervalSince(voice.started)
+            let attack = voice.preset.attackTime > 0 ? min(1, elapsed / voice.preset.attackTime) : 1
+            let decay = voice.preset.decayTime > 0 ? max(0.25, 1 - elapsed / voice.duration * 0.5) : 1
+            return ["Type": "Sine", "Amplitude": partial.amplitude * attack * decay, "DurationMS": 35.0, "DelayMS": 0.0, "FrequencykHz": voice.frequency * partial.multiplier / 1000]
+        }}
+        let strength = currentVoices.map(\.strength).max() ?? 0.8
+        let shape: [String: Any] = ["BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": 35.0], "Tones": tones]
         guard let actuation = createFn(shape as CFDictionary, 0) else { return }
         _ = playFn(actuation, Unmanaged.passUnretained(actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)
         Unmanaged<AnyObject>.fromOpaque(actuation).release()
-        endTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(0.03, durationSeconds) * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.stopAllTones()
-        }
-    }
-
-    func stopAllTones() {
-        endTask?.cancel(); endTask = nil
-        playingTask?.cancel(); playingTask = nil
-        if let process, process.isRunning { process.terminate() }
-        process = nil
     }
 }

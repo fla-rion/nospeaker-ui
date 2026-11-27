@@ -24,13 +24,16 @@ final class SpeakerController: ObservableObject {
     @Published var midiSources: [(id: MIDIEndpointRef, name: String)] = []
     @Published var selectedMIDISource: MIDIEndpointRef = 0 { didSet { if midiEnabled { configureMIDI() } } }
     @Published var keyboardInstrument = InstrumentPreset.piano
+    @Published var octave = 4
+    @Published var legato = false
+    @Published var portamentoMilliseconds = 40.0
 
     private let haptics = HapticEngine()
     private var process: Process?
     private var outputPipes: [Pipe] = []
     private var midiClient = MIDIClientRef()
     private var midiPort = MIDIPortRef()
-    private var activeKey: Int?
+    private var activeKeys = Set<Int>()
     private var lastThereminFrequency: Double?
 
     init() { loadVoices(); refreshMIDISources() }
@@ -46,18 +49,22 @@ final class SpeakerController: ObservableObject {
     func stop() {
         haptics.stopAllTones()
         guard let process, process.isRunning else { return }
-        process.terminate(); activeKey = nil; lastThereminFrequency = nil
+        process.terminate(); activeKeys.removeAll(); lastThereminFrequency = nil
         append("\nStopping nospeaker…\n")
     }
     func playWelcomeMelody() async { await haptics.playWelcomeMelody() }
 
     func playNote(_ midiNote: Int) {
-        activeKey = midiNote
+        let previous = activeKeys.first
+        activeKeys.insert(midiNote)
+        if legato, let previous, previous != midiNote {
+            Task { await haptics.glideToNote(from: previous, to: midiNote, preset: keyboardInstrument, portamentoMilliseconds: portamentoMilliseconds) }
+            return
+        }
         Task { await haptics.playNote(midiNote: midiNote, preset: keyboardInstrument, durationSeconds: 0.35) }
     }
     func releaseNote(_ midiNote: Int) {
-        guard activeKey == midiNote else { return }
-        activeKey = nil; haptics.stopAllTones()
+        activeKeys.remove(midiNote); haptics.stopNote(midiNote: midiNote)
     }
     func theremin(_ position: Double) {
         let frequency = 100 + min(1, max(0, position)) * 3900
@@ -183,12 +190,13 @@ struct ContentView: View {
     @State private var mouseHeldKeys = Set<Int>()
     @State private var keyMonitor: Any?
     @State private var thereminPosition = 0.5
+    @State private var showingSettingsDocs = false
 
-    private let keyboardNotes: [PianoKey] = (48...72).map { midi in
+    private var keyboardNotes: [PianoKey] { (((controller.octave + 1) * 12)...(((controller.octave + 1) * 12) + 11)).map { midi in
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
         let pitch = names[midi % 12]
         return PianoKey(midi: midi, name: "\(pitch)\(midi / 12 - 1)")
-    }
+    } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -227,7 +235,7 @@ struct ContentView: View {
             }.frame(minHeight: 125)
         }
         .padding(20)
-        .toolbar { ToolbarItem(placement: .primaryAction) { Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); showingUpdateSheet = updateManager.latestRelease?.isNewer == true } } } }
+        .toolbar { ToolbarItemGroup(placement: .primaryAction) { Button("Help") { showingSettingsDocs = true }; Button("Check for Updates…") { Task { await updateManager.checkForUpdates(); showingUpdateSheet = updateManager.latestRelease?.isNewer == true } } } }
         .onAppear {
             installKeyboardMonitor()
             Task {
@@ -239,6 +247,7 @@ struct ContentView: View {
         }
         .onDisappear { removeKeyboardMonitor(); if controller.midiEnabled { controller.midiEnabled = false }; controller.stop() }
         .sheet(isPresented: $showingUpdateSheet) { UpdateSheet(manager: updateManager) }
+        .sheet(isPresented: $showingSettingsDocs) { SettingsDocSheet() }
     }
 
     private var controls: some View {
@@ -262,6 +271,8 @@ struct ContentView: View {
             Text("Keyboard synthesizer").font(.headline)
             Text("Click a key or use A W S E D F T G Y H U J K. Hold to play; release to stop.").foregroundColor(.secondary)
             Picker("Instrument", selection: $controller.keyboardInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 200)
+            HStack { Button("<<") { controller.octave = max(1, controller.octave - 1) }.disabled(controller.octave <= 1); Text("Octave \(controller.octave) (C\(controller.octave)–B\(controller.octave))"); Button(">>") { controller.octave = min(7, controller.octave + 1) }.disabled(controller.octave >= 7); Toggle("Legato", isOn: $controller.legato) }
+            HStack { Text("Portamento Time"); Slider(value: $controller.portamentoMilliseconds, in: 0...200); Text("\(Int(controller.portamentoMilliseconds)) ms") }
             piano
             Spacer()
         }.padding(.top, 12)
@@ -341,6 +352,7 @@ struct ContentView: View {
             HStack { Text("Open Your Own MIDI").font(.headline); Spacer(); Button("Open File…", action: midiPlayer.openFile) }
             Divider()
             HStack { Text(midiPlayer.currentTrackName.isEmpty ? "No track selected" : midiPlayer.currentTrackName).lineLimit(1); Spacer(); Text("\(Int(midiPlayer.progress * 100))%") }
+            Text(midiPlayer.currentNoteLabel).font(.caption).foregroundColor(.secondary)
             ProgressView(value: midiPlayer.progress)
             HStack {
                 Button { midiPlayer.isPlaying ? midiPlayer.pause() : midiPlayer.play() } label: { Label(midiPlayer.isPlaying ? "Pause" : "Play", systemImage: midiPlayer.isPlaying ? "pause.fill" : "play.fill") }
@@ -350,15 +362,21 @@ struct ContentView: View {
                 Picker("Instrument", selection: $midiPlayer.currentInstrument) { ForEach(InstrumentPreset.allCases) { Text($0.rawValue).tag($0) } }.frame(width: 170)
             }
             HStack { Text("Tempo"); Slider(value: $midiPlayer.tempo, in: 0.5...2); Text("\(Int(midiPlayer.tempo * 100))%") }
+            HStack { Text("Transpose"); Button("−") { midiPlayer.transpose = max(-12, midiPlayer.transpose - 1) }; Text("\(midiPlayer.transpose) st").frame(width: 45); Button("+") { midiPlayer.transpose = min(12, midiPlayer.transpose + 1) }; Spacer(); Toggle("Loop", isOn: $midiPlayer.loop); Toggle("Legato", isOn: $midiPlayer.legato) }
+            HStack { Text("Portamento Time"); Slider(value: $midiPlayer.portamentoMilliseconds, in: 0...200); Text("\(Int(midiPlayer.portamentoMilliseconds)) ms") }
             HStack { Text("Strength"); Slider(value: $midiPlayer.volume, in: 0...1); Text("\(Int(midiPlayer.volume * 100))%") }
+            Text("Tip: Convert sheet music to MIDI at musescore.com").font(.caption).foregroundColor(.secondary)
         }.padding(.top, 10)
     }
 
     private func installKeyboardMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+            if event.modifierFlags.contains(.command), event.type == .keyDown, event.keyCode == 126 { controller.octave = min(7, controller.octave + 1); return nil }
+            if event.modifierFlags.contains(.command), event.type == .keyDown, event.keyCode == 125 { controller.octave = max(1, controller.octave - 1); return nil }
             guard selectedTab == 1, let character = event.charactersIgnoringModifiers?.lowercased().first else { return event }
-            let mapping: [Character: Int] = ["a": 60, "w": 61, "s": 62, "e": 63, "d": 64, "f": 65, "t": 66, "g": 67, "y": 68, "h": 69, "u": 70, "j": 71, "k": 72]
+            let base = (controller.octave + 1) * 12
+            let mapping: [Character: Int] = ["a": base, "w": base+1, "s": base+2, "e": base+3, "d": base+4, "f": base+5, "t": base+6, "g": base+7, "y": base+8, "h": base+9, "u": base+10, "j": base+11, "k": base+11]
             guard let note = mapping[character] else { return event }
             if event.type == .keyDown {
                 if !event.isARepeat { heldKeys.insert(note); controller.playNote(note) }
@@ -368,5 +386,21 @@ struct ContentView: View {
     }
     private func removeKeyboardMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor); self.keyMonitor = nil }
+    }
+}
+
+private struct SettingsDocSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    private let sections: [(String, String)] = [
+        ("General", "Voice selects an installed macOS voice. Speak reads the text field. Sweep and Demo run the bundled noSpeaker effects. Stop ends active output. The Output area shows process logs and status. Dark, Plain, and External trackpad select CLI modes."),
+        ("Keyboard", "Click piano keys or hold A W S E D F T G Y H U J K. A is the root of the selected octave; the other keys ascend chromatically. << and >> select octaves C1–C7. Command–Up and Command–Down change octave. Legato glides between notes; Portamento Time sets glide duration from 0 to 200 ms."),
+        ("MIDI Player", "Choose one of the built-in pieces or open a .mid/.midi file. Play, Pause, and Stop control playback. Instrument selects the timbre; Tempo scales playback speed (50–200%); Strength sets haptic intensity. Transpose shifts notes by semitones (±12). Loop restarts at the end. Legato and Portamento Time control transitions. The current note and instrument appear during playback."),
+        ("MIDI Input", "Enable MIDI Input, choose a connected source, and use Refresh to rescan. MIDI note-on starts a haptic note; note-off releases that note. Chords are mixed together."),
+        ("Theremin", "Drag the slider across 100–4,000 Hz. Updates are debounced by 10 Hz to avoid excessive actuation calls; release the slider to stop."),
+        ("Instruments", "Piano: bright, struck harmonics. Organ: steady, layered harmonics. Guitar: plucked with a strong second partial. Violin: rich sustained harmonics. Flute: soft fundamental. Trumpet: bright odd harmonics. Bass: low fundamental and subharmonic. Xylophone: woody inharmonic partial. Harpsichord: crisp, bright harmonics. Theremin: smooth pure tone."),
+        ("Updater", "Check for Updates checks the project's GitHub releases. When a newer release is available, the updater shows its changelog and offers a DMG download with progress. Open the downloaded DMG and move the app into Applications to install it.")]
+    var body: some View {
+        NavigationView { List { ForEach(sections, id: \.0) { title, detail in Section(header: Text(title)) { Text(detail).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true) } } }.navigationTitle("Settings Help").toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } } }
+            .frame(minWidth: 560, minHeight: 560)
     }
 }
