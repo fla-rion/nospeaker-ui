@@ -304,7 +304,6 @@ struct ContentView: View {
                 BookwormView(voices: controller.voices, selectedVoice: controller.selectedVoice, onVoiceChange: { controller.selectedVoice = $0 }, onLog: { controller.logMIDI($0) })
                     .tabItem { Label("📖 Bookworm", systemImage: "book") }.tag(4)
             }
-            .onChange(of: controller.trackpadAssignment) { assignment in midiPlayer.trackpadAssignment = assignment }
             .onChange(of: selectedTab) { tab in
                 if tab != 1 { heldKeys.forEach { controller.releaseNote($0) }; heldKeys.removeAll(); mouseHeldKeys.forEach { controller.releaseNote($0) }; mouseHeldKeys.removeAll() }
             }

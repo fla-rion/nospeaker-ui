@@ -62,6 +62,8 @@ final class HapticEngine {
     private var renderTimer: DispatchSourceTimer?
     private let library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
     private var cachedDeviceList: CFArray?  // retain to keep device ptrs valid
+    private var lastVisualVoices: [(frequency: Double, amplitude: Double)] = []
+    private var visualFrameCount = 0
 
     private var currentFrequencyMode: FrequencyMode {
         configurationLock.lock(); defer { configurationLock.unlock() }; return _frequencyMode
@@ -177,7 +179,7 @@ final class HapticEngine {
         for (note, voice) in voices where voice.duration >= 0 && now - voice.startTime >= voice.duration {
             voices.removeValue(forKey: note)
         }
-        guard !voices.isEmpty else { DispatchQueue.main.async { self.onVoicesChanged([]) }; stopRenderer(); return }
+        guard !voices.isEmpty else { DispatchQueue.main.async { [weak self] in self?.onVoicesChanged([]) }; stopRenderer(); return }
         guard !devices.isEmpty,
               let createFn = getSymbol("MTActuationCreateFromDictionary", as: ActuationCreate.self),
               let playFn = getSymbol("MTActuationActuate", as: ActuationPlay.self) else { return }
@@ -186,7 +188,11 @@ final class HapticEngine {
         let melody = sorted.first?.key
         let active = Array(sorted.prefix(4))
         let visual = active.map { ($0.value.frequency, min(1, max(0, $0.value.strength))) }
-        DispatchQueue.main.async { self.onVoicesChanged(visual) }
+        visualFrameCount += 1
+        if visualFrameCount >= 3 {
+            visualFrameCount = 0
+            DispatchQueue.main.async { [weak self] in self?.onVoicesChanged(visual) }
+        }
         let polyphonic = active.count > 1
         var tones: [[String: Any]] = []
         var melodyTones: [[String: Any]] = []

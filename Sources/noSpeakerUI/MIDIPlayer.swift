@@ -10,6 +10,7 @@ struct BuiltInPiece: Identifiable {
 }
 
 @MainActor final class MIDIPlayer: ObservableObject {
+    // Shared HapticEngine — injected from ContentView to avoid two engines on same hardware
     @Published var isPlaying = false; @Published var currentTrackName = ""; @Published var progress = 0.0
     @Published var currentInstrument = InstrumentPreset.piano; @Published var tempo = 1.0; @Published var volume = 0.8
     @Published var transpose = 0; @Published var loop = false; @Published var legato = false; @Published var portamentoMilliseconds = 40.0
@@ -19,8 +20,9 @@ struct BuiltInPiece: Identifiable {
     @Published var trackpadAssignment: HapticEngine.TrackpadAssignment = .auto { didSet { haptics.trackpadAssignment = trackpadAssignment } }
     @Published private(set) var flashingNotes = Set<Int>()
     var onLog: ((String) -> Void)?
-    private let haptics = HapticEngine(); private var events: [Event] = []; private var index = 0; private var timer: Task<Void, Never>?; private var duration = 0.0
-    init() { haptics.onVoicesChanged = { [weak self] in self?.visualVoices = $0 }; haptics.discoverDevices() }
+    var haptics: HapticEngine = HapticEngine()  // replaced with shared instance from ContentView
+    private var events: [Event] = []; private var index = 0; private var timer: Task<Void, Never>?; private var duration = 0.0
+    // Note: haptics.onVoicesChanged and discoverDevices() are configured from ContentView after sharing the engine
     private struct Event { let time: Double; let note: Int; let on: Bool; let velocity: Int }
     private var soundingNotes = Set<Int>()
     func choose(_ piece: BuiltInPiece) {
