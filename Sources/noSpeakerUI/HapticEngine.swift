@@ -44,6 +44,7 @@ final class HapticEngine {
     private var renderTimer: DispatchSourceTimer?
     private let library = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_NOW)
     private var cachedActuator: CFTypeRef?
+    private var cachedDeviceList: CFArray?  // retain to keep device ptrs valid
     private var cachedDevicePtr: UnsafeMutableRawPointer?
 
     private var currentFrequencyMode: FrequencyMode {
@@ -67,6 +68,7 @@ final class HapticEngine {
               let createFn = getSymbol("MTActuatorCreateFromDeviceID", as: ActuatorCreate.self),
               let openFn = getSymbol("MTActuatorOpen", as: ActuatorOpen.self),
               let list = listFn()?.takeRetainedValue() else { return nil }
+        cachedDeviceList = list  // retain so device ptrs stay valid
         for index in 0..<CFArrayGetCount(list) {
             guard let raw = CFArrayGetValueAtIndex(list, index) else { continue }
             let ptr = UnsafeMutableRawPointer(mutating: raw)

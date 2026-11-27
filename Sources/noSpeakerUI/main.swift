@@ -51,8 +51,10 @@ final class SpeakerController: ObservableObject {
     func demo() { var args: [String] = []; addModes(to: &args); launch(args) }
     func stop() {
         haptics.stopAllTones()
+        activeKeys.removeAll()
+        lastThereminFrequency = nil
         guard let process, process.isRunning else { return }
-        process.terminate(); activeKeys.removeAll(); lastThereminFrequency = nil
+        process.terminate()
         append("\nStopping nospeaker…\n")
     }
     func playWelcomeMelody() { haptics.playWelcomeMelody() }
@@ -86,16 +88,23 @@ final class SpeakerController: ObservableObject {
     }
 
     private func loadVoices() {
-        let command = Process(); command.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        command.arguments = ["-v", "?"]; let pipe = Pipe(); command.standardOutput = pipe; command.standardError = Pipe()
-        do {
-            try command.run(); let data = pipe.fileHandleForReading.readDataToEndOfFile(); command.waitUntilExit()
-            voices = String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).compactMap { line in
-                line.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let command = Process(); command.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+            command.arguments = ["-v", "?"]; let pipe = Pipe(); command.standardOutput = pipe; command.standardError = Pipe()
+            do {
+                try command.run(); let data = pipe.fileHandleForReading.readDataToEndOfFile(); command.waitUntilExit()
+                let parsed = String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).compactMap { line in
+                    line.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init)
+                }
+                await MainActor.run {
+                    self?.voices = parsed
+                    self?.selectedVoice = parsed.first ?? ""
+                    if parsed.isEmpty { self?.append("No installed macOS voices were found.\n") }
+                }
+            } catch {
+                await MainActor.run { self?.append("Could not list macOS voices: \(error.localizedDescription)\n") }
             }
-            selectedVoice = voices.first ?? ""
-            if voices.isEmpty { append("No installed macOS voices were found.\n") }
-        } catch { append("Could not list macOS voices: \(error.localizedDescription)\n") }
+        }
     }
 
     func refreshMIDISources() {
@@ -121,14 +130,25 @@ final class SpeakerController: ObservableObject {
             for _ in 0..<packetList.pointee.numPackets {
                 let bytes = withUnsafeBytes(of: packet.data) { Array($0.prefix(Int(packet.length))) }
                 var i = 0
-                while i + 2 < bytes.count {
-                    let status = bytes[i], note = Int(bytes[i + 1]), velocity = bytes[i + 2]
-                    if status & 0xF0 == 0x90 && velocity > 0 {
-                        Task { @MainActor in self.playNote(note) }
-                    } else if status & 0xF0 == 0x80 || (status & 0xF0 == 0x90 && velocity == 0) {
-                        Task { @MainActor in self.releaseNote(note) }
+                while i < bytes.count {
+                    let status = bytes[i]
+                    if status == 0xF0 { break }  // SysEx - skip rest
+                    let msgLen: Int
+                    switch status & 0xF0 {
+                    case 0x80, 0x90, 0xA0, 0xB0, 0xE0: msgLen = 3
+                    case 0xC0, 0xD0: msgLen = 2
+                    default: i += 1; continue
                     }
-                    i += 3
+                    guard i + msgLen <= bytes.count else { break }
+                    if msgLen >= 3 {
+                        let note = Int(bytes[i + 1]), velocity = bytes[i + 2]
+                        if status & 0xF0 == 0x90 && velocity > 0 {
+                            Task { @MainActor in self.playNote(note) }
+                        } else if status & 0xF0 == 0x80 || (status & 0xF0 == 0x90 && velocity == 0) {
+                            Task { @MainActor in self.releaseNote(note) }
+                        }
+                    }
+                    i += msgLen
                 }
                 packet = MIDIPacketNext(&packet).pointee
             }
