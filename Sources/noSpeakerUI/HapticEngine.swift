@@ -108,25 +108,23 @@ final class HapticEngine {
         let sortedVoices = voices.sorted { $0.value.frequency > $1.value.frequency }
         let melodyNote = sortedVoices.first?.key
         let currentVoices = sortedVoices.prefix(4).map(\.value)
-        var candidates: [(amplitude: Double, tone: [String: Any])] = currentVoices.flatMap { voice in voice.preset.partials.map { partial in
+        let candidates: [(amplitude: Double, tone: [String: Any])] = currentVoices.flatMap { voice in voice.preset.partials.map { partial in
             let elapsed = now.timeIntervalSince(voice.started)
             let attack = voice.preset.attackTime > 0 ? min(1, elapsed / voice.preset.attackTime) : 1
             let decay = voice.preset.decayTime > 0 ? max(0.25, 1 - elapsed / voice.duration * 0.5) : 1
             let frequency = min(frequencyMode == .standard ? 3951 : 8000, max(98, voice.frequency * partial.multiplier))
             let note = sortedVoices.first(where: { $0.value.started == voice.started })?.key
-            let budget = note == melodyNote ? 0.6 : 0.4
-            let amplitude = partial.amplitude * attack * decay * budget
+            let isPolyphonic = currentVoices.count > 1
+            let budget = isPolyphonic ? (note == melodyNote ? 0.6 : 0.4) : 1.0
+            let amplitude = min(0.95, partial.amplitude * attack * decay * budget)
             return (amplitude, ["Type": "Sine", "Amplitude": amplitude, "DurationMS": 15.0, "DelayMS": 0.0, "FrequencykHz": frequency / 1000])
         }}
-        let sum = candidates.reduce(0) { $0 + $1.amplitude }
-        if sum > 1 { candidates = candidates.map { candidate in
-            let amplitude = candidate.amplitude / sum
-            var tone = candidate.tone; tone["Amplitude"] = amplitude
-            return (amplitude: amplitude, tone: tone)
-        } }
-        let tones = candidates.sorted { $0.amplitude > $1.amplitude }.prefix(6).map(\.tone)
+        // No global normalization — clamp each amplitude independently above.
+        let voiceLimit = max(1, 6 / max(1, currentVoices.count))
+        // Take at most 2 partials per active voice (like nospeaker.swift's 2-formant model).
+        let tones = candidates.sorted { $0.amplitude > $1.amplitude }.prefix(voiceLimit * 2).map(\.tone)
         let strength = currentVoices.map(\.strength).max() ?? 0.8
-        let shape: [String: Any] = ["BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": 15.0], "Tones": tones]
+        let shape: [String: Any] = ["Tones": tones]
         guard let actuation = createFn(shape as CFDictionary, 0) else { return }
         _ = playFn(actuation, Unmanaged.passUnretained(actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)
         Unmanaged<AnyObject>.fromOpaque(actuation).release()
