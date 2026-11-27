@@ -194,6 +194,7 @@ struct ContentView: View {
     @StateObject private var controller = SpeakerController()
     @StateObject private var updateManager = UpdateManager()
     @StateObject private var midiPlayer = MIDIPlayer()
+    @StateObject private var certInstaller = CertificateInstaller()
     @State private var activeSheet: ActiveSheet? = nil
     @State private var selectedTab = 0
     @State private var heldKeys = Set<Int>()
@@ -218,6 +219,34 @@ struct ContentView: View {
                 Toggle("Dark", isOn: $controller.darkMode).toggleStyle(.switch)
                 Toggle("Plain", isOn: $controller.plainMode).toggleStyle(.switch)
                 Toggle("External trackpad", isOn: $controller.externalTrackpad).toggleStyle(.switch)
+            }
+
+            if certInstaller.needsInstall {
+                HStack {
+                    Image(systemName: "lock.shield.fill").foregroundColor(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("noSpeakerUI Root Certificate not installed").font(.headline)
+                        Text("Install it once to avoid security warnings when opening the app.")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    if certInstaller.isInstalling {
+                        ProgressView()
+                    } else if let error = certInstaller.installError {
+                        Text(error).foregroundColor(.red).font(.caption).lineLimit(2)
+                    } else {
+                        Button("Install Certificate") {
+                            Task { await certInstaller.installCertificate() }
+                        }.buttonStyle(.borderedProminent)
+                    }
+                    if certInstaller.installed {
+                        Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+                    }
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+                .padding(.horizontal)
             }
 
             TabView(selection: $selectedTab) {
@@ -253,6 +282,7 @@ struct ContentView: View {
             Task {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 controller.playWelcomeMelody()
+                certInstaller.checkIfNeeded()
                 await updateManager.checkForUpdates()
                 if updateManager.latestRelease?.isNewer == true { activeSheet = .update }
             }

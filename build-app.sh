@@ -20,6 +20,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp build/noSpeakerUI "$app/Contents/MacOS/noSpeakerUI"
 cp nospeaker "$app/Contents/Resources/nospeaker"
+cp "$PWD/Resources/nospeakerCA.crt" "$app/Contents/Resources/nospeakerCA.crt"
 mkdir -p "$app/Contents/Resources/midi"
 cp Resources/midi/*.mid "$app/Contents/Resources/midi/"
 cat > "$app/Contents/Info.plist" <<'PLIST'
@@ -31,12 +32,29 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key><string>com.a90.nospeakerui</string>
     <key>CFBundleName</key><string>noSpeakerUI</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.7.0</string>
-    <key>CFBundleVersion</key><string>170</string>
+    <key>CFBundleShortVersionString</key><string>1.7.1</string>
+    <key>CFBundleVersion</key><string>171</string>
     <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 PLIST
-codesign --force --deep --sign - --entitlements noSpeakerUI.entitlements "$app"
+codesign --force --deep --sign "noSpeakerUI Code Signing" --entitlements noSpeakerUI.entitlements "$app"
 echo "Built universal app at $app"
+
+dmg_stage="build/dmg_stage"
+dmg="noSpeakerUI-1.7.1.dmg"
+rm -rf "$dmg_stage" "$dmg"
+mkdir -p "$dmg_stage"
+cp -R "$app" "$dmg_stage/"
+cp Resources/nospeakerCA.crt "$dmg_stage/nospeakerCA.crt"
+cat > "$dmg_stage/Install Certificate.command" <<'INSTALLER'
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+security add-trusted-cert -k ~/Library/Keychains/login.keychain-db -r trustRoot "$DIR/nospeakerCA.crt"
+echo "Certificate installed successfully!"
+read -p "Press Enter to close..."
+INSTALLER
+chmod +x "$dmg_stage/Install Certificate.command"
+hdiutil create -volname "noSpeakerUI 1.7.1" -srcfolder "$dmg_stage" -ov -format UDZO "$dmg"
+echo "Built $dmg"
