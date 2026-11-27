@@ -39,7 +39,7 @@ final class SpeakerController: ObservableObject {
     @Published var debugRender = false { didSet { haptics.debugEnabled = debugRender } }
     @Published private(set) var flashingNotes = Set<Int>()
 
-    private let haptics = HapticEngine()
+    let haptics = HapticEngine()
     let virtualMIDI = VirtualMIDIPort()
     private var process: Process?
     private var outputPipes: [Pipe] = []
