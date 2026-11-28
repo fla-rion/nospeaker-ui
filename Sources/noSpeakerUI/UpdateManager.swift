@@ -95,59 +95,72 @@ final class UpdateManager: ObservableObject {
         defer { isInstalling = false }
 
         do {
-            // 1. Mount DMG
+            // 1. Mount DMG — use -plist for machine-readable output (not -quiet which suppresses mount point)
             let mountOutput = try await runCommand("/usr/bin/hdiutil",
-                args: ["attach", "-nobrowse", "-quiet", dmgPath])
+                args: ["attach", "-nobrowse", "-plist", dmgPath])
 
-            // Find mount point (last /Volumes/... line from hdiutil)
-            let mountPoint = mountOutput.split(separator: "\n")
-                .compactMap { line -> String? in
-                    let parts = line.split(separator: "\t")
-                    guard parts.count >= 3 else { return nil }
-                    let mp = parts.last.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
-                    return mp.hasPrefix("/Volumes/") ? mp : nil
-                }.last
+            // Parse plist to find mount point reliably
+            guard let plistData = mountOutput.data(using: .utf8),
+                  let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any],
+                  let entities = plist["system-entities"] as? [[String: Any]],
+                  let mountPoint = entities.compactMap({ $0["mount-point"] as? String })
+                      .first(where: { $0.hasPrefix("/Volumes/") })
+            else { throw UpdateError.mountFailed }
 
-            guard let mountPoint else { throw UpdateError.mountFailed }
-
-            // 2. Find .app in mounted volume
+            // 2. Find noSpeakerUI.app in mounted volume (look specifically for our app, not just any .app)
             let fm = FileManager.default
-            let appFiles = try fm.contentsOfDirectory(atPath: mountPoint)
-                .filter { $0.hasSuffix(".app") }
-            guard let appName = appFiles.first else { throw UpdateError.noAppFound }
+            let allFiles = (try? fm.contentsOfDirectory(atPath: mountPoint)) ?? []
+            let appName = allFiles.first(where: { $0 == "noSpeakerUI.app" })
+                ?? allFiles.first(where: { $0.hasSuffix(".app") })
+            guard let appName else { throw UpdateError.noAppFound }
 
             let sourceApp = "\(mountPoint)/\(appName)"
-            let destApp = "/Applications/\(appName)"
-            let destAppUser = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Applications/\(appName)").path
 
-            // 3. Copy app — try /Applications first, fall back to ~/Applications
+            // 3. Find where the current app lives — install next to it
+            let currentAppPath = Bundle.main.bundlePath
+            let currentAppDir = (currentAppPath as NSString).deletingLastPathComponent
+            let destApp = "\(currentAppDir)/\(appName)"
+            // Fallback paths if same-dir install fails
+            let destSystem = "/Applications/\(appName)"
+            let destUser = fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications/\(appName)").path
+
             let destination: String
-            if fm.fileExists(atPath: destApp) || fm.isWritableFile(atPath: "/Applications/") {
-                if fm.fileExists(atPath: destApp) {
-                    try fm.removeItem(atPath: destApp)
-                }
+            if fm.isWritableFile(atPath: currentAppDir) || currentAppDir == "/Applications" {
+                if fm.fileExists(atPath: destApp) { try fm.removeItem(atPath: destApp) }
                 try fm.copyItem(atPath: sourceApp, toPath: destApp)
                 destination = destApp
+            } else if fm.fileExists(atPath: destSystem) {
+                try fm.removeItem(atPath: destSystem)
+                try fm.copyItem(atPath: sourceApp, toPath: destSystem)
+                destination = destSystem
             } else {
-                try fm.createDirectory(atPath: FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("Applications").path,
+                try fm.createDirectory(atPath: fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path,
                     withIntermediateDirectories: true)
-                if fm.fileExists(atPath: destAppUser) {
-                    try fm.removeItem(atPath: destAppUser)
-                }
-                try fm.copyItem(atPath: sourceApp, toPath: destAppUser)
-                destination = destAppUser
+                if fm.fileExists(atPath: destUser) { try fm.removeItem(atPath: destUser) }
+                try fm.copyItem(atPath: sourceApp, toPath: destUser)
+                destination = destUser
             }
 
-            // 4. Unmount DMG
-            _ = try? await runCommand("/usr/bin/hdiutil", args: ["detach", mountPoint, "-quiet"])
+            // 4. Remove quarantine from installed app
+            let xattr = Process()
+            xattr.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+            xattr.arguments = ["-dr", "com.apple.quarantine", destination]
+            try? xattr.run(); xattr.waitUntilExit()
 
-            // 5. Launch new version and quit current
+            // 5. Unmount DMG
+            _ = try? await runCommand("/usr/bin/hdiutil", args: ["detach", mountPoint, "-force"])
+
+            // 6. Launch new version, then quit after a beat
             installResult = ""
-            try? fm.removeItem(atPath: dmgPath)  // cleanup
-            NSWorkspace.shared.open(URL(fileURLWithPath: destination))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            try? fm.removeItem(atPath: dmgPath)
+            let destURL = URL(fileURLWithPath: destination)
+            if #available(macOS 10.15, *) {
+                NSWorkspace.shared.openApplication(at: destURL,
+                    configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
+            } else {
+                NSWorkspace.shared.open(destURL)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 NSApplication.shared.terminate(nil)
             }
         } catch {

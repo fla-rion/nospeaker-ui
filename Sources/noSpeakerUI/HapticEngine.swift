@@ -211,6 +211,14 @@ final class HapticEngine {
         renderTimer = nil
     }
 
+    // Compute DurationMS aligned to a whole number of cycles of `hz`.
+    // Target ~11ms so each frame is clean without click artefacts at the boundary.
+    private func wholeCycleDurationMs(hz: Double) -> Double {
+        let periodMs = 1000.0 / hz
+        let n = max(1, Int((11.0 / periodMs).rounded()))
+        return Double(n) * periodMs
+    }
+
     private func renderFrame() {
         let now = CACurrentMediaTime()
         for (note, voice) in voices where voice.duration >= 0 && now - voice.startTime >= voice.duration {
@@ -238,23 +246,43 @@ final class HapticEngine {
         var harmonyTones: [[String: Any]] = []
         for (note, voice) in active {
             let elapsed = now - voice.startTime
-            let attack = voice.preset.attackTime > 0 ? min(1, elapsed / voice.preset.attackTime) : 1
-            let budget = polyphonic ? (note == melody ? 0.6 : 0.4) : 1.0
+            // Attack envelope
+            let attack = voice.preset.attackTime > 0 ? min(1, elapsed / voice.preset.attackTime) : 1.0
+            // Decay envelope: fade out the last decayTime seconds of a finite note
+            let decay: Double
+            if voice.preset.decayTime > 0, voice.duration > 0 {
+                let remaining = (voice.startTime + voice.duration) - now
+                decay = remaining < voice.preset.decayTime ? max(0.05, remaining / voice.preset.decayTime) : 1.0
+            } else { decay = 1.0 }
+            let budget = polyphonic ? (note == melody ? 0.55 : 0.45) : 1.0
+            // Whole-cycle duration aligned to the fundamental of this voice
+            let durationMs = wholeCycleDurationMs(hz: voice.frequency)
             for partial in voice.preset.partials.prefix(2) {
                 let frequency = clampHz(voice.frequency * partial.multiplier)
-                let amplitude = min(0.95, partial.amplitude * attack * budget * voice.strength)
-                let tone: [String: Any] = ["Type": "Sine", "Amplitude": amplitude, "DurationMS": 12.0, "DelayMS": 0.0, "FrequencykHz": frequency / 1000]
+                // Raw amplitude before normalization — will be normalized per-actuation below
+                let amplitude = partial.amplitude * attack * decay * budget * voice.strength
+                let tone: [String: Any] = ["Type": "Sine", "Amplitude": amplitude, "DurationMS": durationMs, "DelayMS": 0.0, "FrequencykHz": frequency / 1000]
                 tones.append(tone)
                 if note == melody { melodyTones.append(tone) } else { harmonyTones.append(tone) }
             }
         }
         guard !tones.isEmpty else { return }
         let strength = active.map { $0.value.strength }.max() ?? 0.8
-        func play(_ tones: [[String: Any]], on device: TrackpadDevice) {
-            guard !tones.isEmpty else { return }
+
+        // Normalize amplitudes to sum ≤ 1.0 — matches original nospeaker.swift and prevents motor distortion
+        func normalize(_ tones: [[String: Any]]) -> [[String: Any]] {
+            let sum = tones.compactMap { $0["Amplitude"] as? Double }.reduce(0, +)
+            guard sum > 0.0001 else { return tones }
+            return tones.map { var t = $0; t["Amplitude"] = ((t["Amplitude"] as? Double) ?? 0) / sum; return t }
+        }
+
+        func play(_ rawTones: [[String: Any]], on device: TrackpadDevice) {
+            guard !rawTones.isEmpty else { return }
+            let normalized = normalize(rawTones)
+            let maxDurationMs = normalized.compactMap { $0["DurationMS"] as? Double }.max() ?? 11.0
             let shape: [String: Any] = [
-                "BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": 12.0],
-                "Tones": Array(tones.prefix(6))
+                "BaseWaveform": ["Type": "Gaussian", "Amplitude": 0.0, "DurationMS": maxDurationMs],
+                "Tones": Array(normalized.prefix(6))
             ]
             guard let actuation = createFn(shape as CFDictionary, 0) else { return }
             _ = playFn(actuation, Unmanaged.passUnretained(device.actuator).toOpaque(), 0, Float(min(1, max(0, strength))), 0)

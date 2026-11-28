@@ -3,6 +3,15 @@
 All notable changes to noSpeakerUI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [2.0.1] - 2026-11-28
+### Fixed
+- **Sound clarity**: HapticEngine renderFrame now normalizes tone amplitudes to sum=1.0 before actuation (prevents motor distortion when multiple partials or polyphonic voices were summing above 1.0)
+- **Sound clarity**: DurationMS per tone now whole-cycle aligned to its fundamental frequency (e.g. 440Hz→11.36ms, 261Hz→11.49ms) — eliminates click artefacts at frame boundaries
+- **Sound clarity**: Decay envelope added for piano/guitar/xylophone/harpsichord presets — smooth note release instead of hard cutoff
+- **Updater fix**: hdiutil now uses -plist instead of -quiet — mount point was nil with -quiet, causing silent install failure
+- **Updater fix**: plist XML parsed with PropertyListSerialization for reliable mount point detection
+- **Updater fix**: app installed next to current app location; quarantine attr removed with xattr -dr; relaunch uses openApplication API
+
 ## [2.0.0] - 2026-11-28
 ### Added
 - Multi-track MIDI playback: MIDI channels are now parsed individually with per-channel instrument presets
